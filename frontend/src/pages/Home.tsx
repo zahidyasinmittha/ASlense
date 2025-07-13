@@ -155,7 +155,7 @@ const Home: React.FC = () => {
           </div>
         </div>
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center min-h-screen">
+        <div className="relative max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 flex items-center min-h-screen">
           <div className="w-full">
             {/* Main Hero Content */}
             <div className="text-center lg:text-left lg:flex lg:items-center lg:justify-between">
