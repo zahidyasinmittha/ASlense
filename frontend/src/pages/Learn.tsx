@@ -1,138 +1,316 @@
-import React, { useState } from 'react';
-import { Play, X, BookOpen, Hash, Heart, MessageSquare, Users, Star, Trophy, Clock, Search, Filter, Volume2 } from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import {
+  Play,
+  X,
+  BookOpen,
+  Hash,
+  Heart,
+  MessageSquare,
+  Users,
+  Star,
+  Trophy,
+  Clock,
+  Search,
+  Filter,
+  Volume2,
+} from "lucide-react";
 
 const Learn: React.FC = () => {
-  const [selectedCategory, setSelectedCategory] = useState('alphabet');
+  const baseUrl   = import.meta.env.VITE_BACKEND_BASEURL;
+  const [selectedCategory, setSelectedCategory] = useState("Alphabet");
   const [selectedWord, setSelectedWord] = useState<any>(null);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [difficultyFilter, setDifficultyFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState("all");
+  const [vidos, setVideos] = useState<Video[]>([]);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   const categories = [
-    { id: 'alphabet', name: 'Alphabet', icon: BookOpen, color: 'blue', count: 26 },
-    { id: 'numbers', name: 'Numbers', icon: Hash, color: 'green', count: 10 },
-    { id: 'daily', name: 'Daily Vocabulary', icon: MessageSquare, color: 'purple', count: 50 },
-    { id: 'emotions', name: 'Emotions', icon: Heart, color: 'red', count: 20 },
-    { id: 'phrases', name: 'Phrases', icon: Users, color: 'orange', count: 30 },
+    {
+      id: "Alphabet",
+      name: "Alphabet",
+      icon: BookOpen,
+      color: "blue",
+      count: 56,
+    },
+    { id: "Numbers", name: "Numbers", icon: Hash, color: "green", count: 24 },
+    {
+      id: "Daily Vocabulary",
+      name: "Daily Vocabulary",
+      icon: MessageSquare,
+      color: "purple",
+      count: 3758,
+    },
+    { id: "Emotions", name: "Emotions", icon: Heart, color: "red", count: 536 },
+    { id: "Phrases", name: "Phrases", icon: Users, color: "orange", count: 40 },
   ];
 
-  const wordsData = {
-    alphabet: [
-      { id: 1, title: 'Letter A', description: 'Make a fist with your thumb resting on the side of your index finger.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-a.mp4', thumbnail: '🅰️' },
-      { id: 2, title: 'Letter B', description: 'Hold your hand up with all four fingers extended and thumb folded across your palm.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-b.mp4', thumbnail: '🅱️' },
-      { id: 3, title: 'Letter C', description: 'Form a C shape with your thumb and fingers.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-c.mp4', thumbnail: '🅲' },
-      { id: 4, title: 'Letter D', description: 'Point your index finger up while other fingers touch your thumb.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-d.mp4', thumbnail: '🅳' },
-      { id: 5, title: 'Letter E', description: 'Curl all fingers down to touch your thumb.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-e.mp4', thumbnail: '🅴' },
-      { id: 6, title: 'Letter F', description: 'Touch your thumb to your index finger, other fingers up.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-f.mp4', thumbnail: '🅵' },
-    ],
-    numbers: [
-      { id: 7, title: 'Number 1', description: 'Point your index finger up while keeping other fingers closed.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-1.mp4', thumbnail: '1️⃣' },
-      { id: 8, title: 'Number 2', description: 'Extend your index and middle fingers in a V shape.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-2.mp4', thumbnail: '2️⃣' },
-      { id: 9, title: 'Number 3', description: 'Extend your index, middle, and ring fingers.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-3.mp4', thumbnail: '3️⃣' },
-      { id: 10, title: 'Number 4', description: 'Hold up four fingers with thumb folded.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-4.mp4', thumbnail: '4️⃣' },
-      { id: 11, title: 'Number 5', description: 'Spread all five fingers wide.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-5.mp4', thumbnail: '5️⃣' },
-    ],
-    daily: [
-      { id: 12, title: 'Hello', description: 'Wave your hand in a friendly greeting motion.', difficulty: 'Beginner', duration: '45s', videoUrl: 'https://example.com/video-hello.mp4', thumbnail: '👋' },
-      { id: 13, title: 'Thank You', description: 'Touch your chin with your fingertips and move your hand forward.', difficulty: 'Beginner', duration: '45s', videoUrl: 'https://example.com/video-thanks.mp4', thumbnail: '🙏' },
-      { id: 14, title: 'Please', description: 'Place your hand on your chest and move it in a circular motion.', difficulty: 'Intermediate', duration: '60s', videoUrl: 'https://example.com/video-please.mp4', thumbnail: '🤲' },
-      { id: 15, title: 'Sorry', description: 'Make a fist and rub it in a circular motion on your chest.', difficulty: 'Beginner', duration: '45s', videoUrl: 'https://example.com/video-sorry.mp4', thumbnail: '😔' },
-      { id: 16, title: 'Water', description: 'Tap your chin with the W handshape.', difficulty: 'Intermediate', duration: '50s', videoUrl: 'https://example.com/video-water.mp4', thumbnail: '💧' },
-      { id: 17, title: 'Food', description: 'Bring your fingertips to your mouth repeatedly.', difficulty: 'Beginner', duration: '40s', videoUrl: 'https://example.com/video-food.mp4', thumbnail: '🍽️' },
-    ],
-    emotions: [
-      { id: 18, title: 'Happy', description: 'Brush your hands up your chest with a joyful expression.', difficulty: 'Beginner', duration: '45s', videoUrl: 'https://example.com/video-happy.mp4', thumbnail: '😊' },
-      { id: 19, title: 'Sad', description: 'Run your fingers down your face like tears.', difficulty: 'Beginner', duration: '45s', videoUrl: 'https://example.com/video-sad.mp4', thumbnail: '😢' },
-      { id: 20, title: 'Excited', description: 'Alternate touching your chest with both hands in an upward motion.', difficulty: 'Intermediate', duration: '60s', videoUrl: 'https://example.com/video-excited.mp4', thumbnail: '🤩' },
-      { id: 21, title: 'Angry', description: 'Claw your fingers and pull them away from your face.', difficulty: 'Intermediate', duration: '55s', videoUrl: 'https://example.com/video-angry.mp4', thumbnail: '😠' },
-      { id: 22, title: 'Love', description: 'Cross your arms over your chest and hug yourself.', difficulty: 'Beginner', duration: '40s', videoUrl: 'https://example.com/video-love.mp4', thumbnail: '❤️' },
-    ],
-    phrases: [
-      { id: 23, title: 'How are you?', description: 'Point to the person, then sign "how" and point back to them.', difficulty: 'Intermediate', duration: '90s', videoUrl: 'https://example.com/video-how-are-you.mp4', thumbnail: '❓' },
-      { id: 24, title: 'Nice to meet you', description: 'Sign "nice", "to", "meet", and "you" in sequence.', difficulty: 'Advanced', duration: '120s', videoUrl: 'https://example.com/video-nice-meet.mp4', thumbnail: '🤝' },
-      { id: 25, title: 'I love you', description: 'Extend your thumb, index, and pinky fingers.', difficulty: 'Beginner', duration: '30s', videoUrl: 'https://example.com/video-i-love-you.mp4', thumbnail: '🤟' },
-      { id: 26, title: 'Good morning', description: 'Sign "good" then "morning" with sunrise motion.', difficulty: 'Intermediate', duration: '75s', videoUrl: 'https://example.com/video-good-morning.mp4', thumbnail: '🌅' },
-      { id: 27, title: 'See you later', description: 'Point to your eyes, then to the person, then wave goodbye.', difficulty: 'Advanced', duration: '100s', videoUrl: 'https://example.com/video-see-later.mp4', thumbnail: '👋' },
-    ],
+  interface VideoFromApi {
+    id: number;
+    title: string;
+    description: string;
+    difficulty: "Beginner" | "Intermediate" | "Advanced";
+    duration: string;
+    video_file: string;
+    thumbnail: string;
+    category: string;
+    word: string;
+  }
+
+  interface Video {
+    id: number;
+    title: string;
+    description: string;
+    difficulty: "Beginner" | "Intermediate" | "Advanced";
+    duration: string;
+    thumbnail: string;
+    videoUrl: string;
+    category: string;
+    word: string;
+  }
+   
+  interface VideosResponse {
+  videos: VideoFromApi[];
+  total: number;
+  page: number;
+}
+
+  const [currentWords, setCurrentWords] = useState<Video[]>([]);
+  const [filteredWords, setFilteredWords] = useState<Video[]>([]);
+
+  // Reset all data when category changes
+  useEffect(() => {
+    setVideos([]);
+    setCurrentWords([]);
+    setFilteredWords([]);
+    setPage(1);
+    setHasMore(true);
+    setSearchTerm("");
+    setDifficultyFilter("all");
+  }, [selectedCategory]);
+
+  // Fetch videos when category or page changes
+  useEffect(() => {
+    const fetchVideos = async () => {
+      if (loading || (!hasMore && page > 1)) return;
+
+      setLoading(true);
+      try {
+        const res = await axios.get<VideosResponse>(
+          `${baseUrl}/learn/videos?category=${selectedCategory}&page=${page}&limit=20`
+        );
+        const apiVideos = res.data?.videos || [];
+
+        const newVideos: Video[] = apiVideos.map((v: VideoFromApi) => ({
+          id: v.id,
+          title: v.title || v.word || "Untitled",
+          description: v.description || "No description available",
+          difficulty: v.difficulty || "Beginner",
+          duration: v.duration || "30s",
+          videoUrl: `${baseUrl}/learn/stream/${v.video_file}`,
+          thumbnail:encodeURIComponent(v.thumbnail) || "📹",
+          category: v.category || "",
+          word: v.word || "",
+        }));
+
+        if (page === 1) {
+          // First page - replace all data
+          setVideos(newVideos);
+          setCurrentWords(newVideos);
+          setFilteredWords(newVideos);
+        } else {
+          // Subsequent pages - append new videos without duplicates
+          setVideos((prev) => {
+            const existingIds = new Set(prev.map((v) => v.id));
+            const uniqueNew = newVideos.filter((v) => !existingIds.has(v.id));
+            return [...prev, ...uniqueNew];
+          });
+          setCurrentWords((prev) => {
+            const existingIds = new Set(prev.map((v) => v.id));
+            const uniqueNew = newVideos.filter((v) => !existingIds.has(v.id));
+            return [...prev, ...uniqueNew];
+          });
+          setFilteredWords((prev) => {
+            const existingIds = new Set(prev.map((v) => v.id));
+            const uniqueNew = newVideos.filter((v) => !existingIds.has(v.id));
+            return [...prev, ...uniqueNew];
+          });
+        }
+
+        // Check if there are more pages
+        setHasMore(newVideos.length === 20);
+      } catch (error) {
+        console.error("Error fetching videos:", error);
+        setHasMore(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVideos();
+  }, [selectedCategory, page]);
+
+  // Handle infinite scroll
+  useEffect(() => {
+    const handleScroll = () => {
+      if (
+        window.innerHeight + document.documentElement.scrollTop >=
+          document.documentElement.offsetHeight - 100 &&
+        !loading &&
+        hasMore &&
+        searchTerm === "" &&
+        difficultyFilter === "all"
+      ) {
+        setPage((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [loading, hasMore, searchTerm, difficultyFilter]);
+
+  // Handle search and filtering
+  useEffect(() => {
+    const performSearch = async () => {
+      if (searchTerm || difficultyFilter !== "all") {
+        setLoading(true);
+        try {
+          const res = await axios.get<VideosResponse>(`${baseUrl}/learn/search`, {
+            params: {
+              query: searchTerm || "",
+              difficulty: difficultyFilter,
+              page: 1,
+              limit: 100,
+            },
+          });
+
+          const searchResults: Video[] = (res.data?.videos || []).map(
+            (v: VideoFromApi) => ({
+              id: v.id,
+              title: v.title || v.word || "Untitled",
+              description: v.description || "No description available",
+              difficulty: v.difficulty || "Beginner",
+              duration: v.duration || "30s",
+              videoUrl: `${baseUrl}/learn/stream/${v.video_file}`,
+              thumbnail: encodeURIComponent(v.thumbnail) || "📹",
+              category: v.category || "",  
+              word: v.word || "",
+            })
+          );
+
+          setFilteredWords(searchResults);
+        } catch (error) {
+          console.error("Error searching videos:", error);
+          setFilteredWords([]);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        // No search/filter active - show current words
+        setFilteredWords(currentWords);
+      }
+    };
+
+    const debounceTimer = setTimeout(performSearch, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [searchTerm, difficultyFilter, currentWords]);
+
+  const handleCategoryChange = (categoryId: string) => {
+    setSelectedCategory(categoryId);
   };
 
-  const currentWords = wordsData[selectedCategory as keyof typeof wordsData];
-
-  const filteredWords = currentWords.filter(word => {
-    const matchesSearch = word.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         word.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDifficulty = difficultyFilter === 'all' || word.difficulty.toLowerCase() === difficultyFilter;
-    return matchesSearch && matchesDifficulty;
-  });
-
-  const openVideoModal = (word: any) => {
+  const openVideoModal = (word: Video) => {
     setSelectedWord(word);
     setIsVideoModalOpen(true);
-    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+    document.body.style.overflow = "hidden";
   };
 
   const closeVideoModal = () => {
     setIsVideoModalOpen(false);
     setSelectedWord(null);
-    document.body.style.overflow = 'unset'; // Restore scrolling
+    document.body.style.overflow = "unset";
   };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
-      case 'Beginner': return 'text-green-600 bg-green-100 border-green-200';
-      case 'Intermediate': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
-      case 'Advanced': return 'text-red-600 bg-red-100 border-red-200';
-      default: return 'text-gray-600 bg-gray-100 border-gray-200';
+      case "Beginner":
+        return "text-green-600 bg-green-100 border-green-200";
+      case "Intermediate":
+        return "text-yellow-600 bg-yellow-100 border-yellow-200";
+      case "Advanced":
+        return "text-red-600 bg-red-100 border-red-200";
+      default:
+        return "text-gray-600 bg-gray-100 border-gray-200";
     }
   };
 
   const getDifficultyIcon = (difficulty: string) => {
     switch (difficulty) {
-      case 'Beginner': return '🟢';
-      case 'Intermediate': return '🟡';
-      case 'Advanced': return '🔴';
-      default: return '⚪';
+      case "Beginner":
+        return "🟢";
+      case "Intermediate":
+        return "🟡";
+      case "Advanced":
+        return "🔴";
+      default:
+        return "⚪";
     }
   };
 
   const floatingElements = [
-    { emoji: '🤟', delay: 0, duration: 4 },
-    { emoji: '👋', delay: 1, duration: 5 },
-    { emoji: '✋', delay: 2, duration: 3 },
-    { emoji: '👌', delay: 3, duration: 6 },
-    { emoji: '🤲', delay: 4, duration: 4 },
-    { emoji: '👐', delay: 5, duration: 5 },
+    { emoji: "🤟", delay: 0, duration: 4 },
+    { emoji: "👋", delay: 1, duration: 5 },
+    { emoji: "✋", delay: 2, duration: 3 },
+    { emoji: "👌", delay: 3, duration: 6 },
+    { emoji: "🤲", delay: 4, duration: 4 },
+    { emoji: "👐", delay: 5, duration: 5 },
   ];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 py-8 ">
+      <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
-        <div className="text-center mb-12 animate-fade-in-up ">
+        <div className="text-center mb-12 animate-fade-in-up">
           <div className="relative group mb-6">
             <div className="absolute -inset-4 blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse"></div>
             <BookOpen className="relative h-16 w-16 text-blue-600 mx-auto animate-bounce-gentle" />
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">Master ASL Signs</h1>
-          <p className="text-xl text-gray-600">Interactive video lessons for every skill level</p>
+          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+            Master ASL Signs
+          </h1>
+          <p className="text-xl text-gray-600">
+            Interactive video lessons for every skill level
+          </p>
           {floatingElements.map((element, i) => (
             <div
               key={i}
               className="absolute text-4xl opacity-20 animate-float pointer-events-none"
               style={{
-                left: `${10 + (i * 15)}%`,
-                top: `${20 + (i * 10)}%`,
+                left: `${10 + i * 15}%`,
+                top: `${20 + i * 10}%`,
                 animationDelay: `${element.delay}s`,
-                animationDuration: `${element.duration}s`
+                animationDuration: `${element.duration}s`,
               }}
             >
               {element.emoji}
             </div>
           ))}
-           {/* Rotating rings */}
-                      <div className="absolute inset-0 border-2 border-blue-400/30 rounded-full animate-spin" style={{ animationDuration: '20s' }}></div>
-                      <div className="absolute inset-4 border-2 border-purple-400/30 rounded-full animate-spin" style={{ animationDuration: '15s', animationDirection: 'reverse' }}></div>
-                      <div className="absolute inset-8 border-2 border-pink-400/30 rounded-full animate-spin" style={{ animationDuration: '10s' }}></div>
+          {/* Rotating rings */}
+          <div
+            className="absolute inset-0 border-2 border-blue-400/30 rounded-full animate-spin"
+            style={{ animationDuration: "20s" }}
+          ></div>
+          <div
+            className="absolute inset-4 border-2 border-purple-400/30 rounded-full animate-spin"
+            style={{ animationDuration: "15s", animationDirection: "reverse" }}
+          ></div>
+          <div
+            className="absolute inset-8 border-2 border-pink-400/30 rounded-full animate-spin"
+            style={{ animationDuration: "10s" }}
+          ></div>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-8">
@@ -143,7 +321,7 @@ const Learn: React.FC = () => {
                 <Filter className="h-5 w-5 mr-2 text-blue-600" />
                 Categories
               </h2>
-              
+
               {/* Search */}
               <div className="mb-6">
                 <div className="relative">
@@ -160,7 +338,9 @@ const Learn: React.FC = () => {
 
               {/* Difficulty Filter */}
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Difficulty Level</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Difficulty Level
+                </label>
                 <select
                   value={difficultyFilter}
                   onChange={(e) => setDifficultyFilter(e.target.value)}
@@ -180,26 +360,32 @@ const Learn: React.FC = () => {
                   return (
                     <button
                       key={category.id}
-                      onClick={() => {
-                        setSelectedCategory(category.id);
-                        setSearchTerm('');
-                        setDifficultyFilter('all');
-                      }}
+                      onClick={() => handleCategoryChange(category.id)}
                       className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-left transition-all duration-300 transform hover:scale-105 group card-hover ${
                         selectedCategory === category.id
                           ? `bg-gradient-to-r from-${category.color}-50 to-${category.color}-100 text-${category.color}-700 border-${category.color}-200 border shadow-md`
-                          : 'text-gray-700 hover:bg-gray-50 hover:shadow-sm'
+                          : "text-gray-700 hover:bg-gray-50 hover:shadow-sm"
                       }`}
                     >
                       <div className="flex items-center space-x-3">
-                        <Icon className={`h-5 w-5 ${selectedCategory === category.id ? `text-${category.color}-600` : 'text-gray-500'} group-hover:scale-110 transition-transform duration-300 animate-wiggle`} />
+                        <Icon
+                          className={`h-5 w-5 ${
+                            selectedCategory === category.id
+                              ? `text-${category.color}-600`
+                              : "text-gray-500"
+                          } group-hover:scale-110 transition-transform duration-300 animate-wiggle`}
+                        />
                         <div>
                           <span className="font-medium">{category.name}</span>
-                          <div className="text-xs text-gray-500">{category.count} signs</div>
+                          <div className="text-xs text-gray-500">
+                            {category.count} signs
+                          </div>
                         </div>
                       </div>
                       {selectedCategory === category.id && (
-                        <div className={`w-3 h-3 bg-${category.color}-600 rounded-full animate-pulse`}></div>
+                        <div
+                          className={`w-3 h-3 bg-${category.color}-600 rounded-full animate-pulse`}
+                        ></div>
                       )}
                     </button>
                   );
@@ -218,7 +404,10 @@ const Learn: React.FC = () => {
                     <span className="font-medium text-blue-600">47/136</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-1000 animate-shimmer" style={{ width: '35%' }}></div>
+                    <div
+                      className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-1000 animate-shimmer"
+                      style={{ width: "35%" }}
+                    ></div>
                   </div>
                   <div className="flex justify-between text-xs text-gray-500">
                     <span>Beginner</span>
@@ -235,24 +424,36 @@ const Learn: React.FC = () => {
             <div className="bg-white rounded-xl shadow-sm p-6 mb-6 animate-fade-in-right">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
-                  {React.createElement(categories.find(c => c.id === selectedCategory)?.icon || BookOpen, {
-                    className: `h-8 w-8 text-${categories.find(c => c.id === selectedCategory)?.color}-600 animate-bounce-gentle`
-                  })}
+                  {React.createElement(
+                    categories.find((c) => c.id === selectedCategory)?.icon ||
+                      BookOpen,
+                    {
+                      className: `h-8 w-8 text-${
+                        categories.find((c) => c.id === selectedCategory)?.color
+                      }-600 animate-bounce-gentle`,
+                    }
+                  )}
                   <div>
                     <h2 className="text-2xl font-bold text-gray-900">
-                      {categories.find(c => c.id === selectedCategory)?.name}
+                      {categories.find((c) => c.id === selectedCategory)?.name}
                     </h2>
                     <p className="text-gray-600">
                       {filteredWords.length} of {currentWords.length} signs
                       {searchTerm && ` matching "${searchTerm}"`}
-                      {difficultyFilter !== 'all' && ` (${difficultyFilter})`}
+                      {difficultyFilter !== "all" && ` (${difficultyFilter})`}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-gray-500">Total Duration</div>
                   <div className="text-lg font-semibold text-gray-900">
-                    {Math.round(filteredWords.reduce((acc, word) => acc + parseInt(word.duration), 0) / 60)} min
+                    {Math.round(
+                      filteredWords.reduce((acc, word) => {
+                        const duration = word.duration.replace(/\D/g, "");
+                        return acc + (parseInt(duration) || 0);
+                      }, 0) / 60
+                    )}{" "}
+                    min
                   </div>
                 </div>
               </div>
@@ -262,24 +463,30 @@ const Learn: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 stagger-animation">
               {filteredWords.map((word, index) => (
                 <div
-                  key={word.id}
+                  key={`video-${word.id}-${selectedCategory}-${index}`}
                   onClick={() => openVideoModal(word)}
                   className="group bg-white rounded-xl shadow-sm hover:shadow-xl transition-all duration-500 transform hover:scale-105 cursor-pointer word-card animate-scale-in"
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
                   {/* Thumbnail */}
-                  <div className="relative bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 h-48 rounded-t-xl flex items-center justify-center overflow-hidden">
+                  <div
+                    className="relative bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 h-48 rounded-t-xl flex items-center justify-center overflow-hidden"
+                    style={{ backgroundImage: `url(thumbnails/${word.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
                     <div className="absolute inset-0 bg-black/20"></div>
-                    <div className="relative text-6xl group-hover:scale-110 transition-transform duration-300 animate-float" style={{ animationDelay: `${index * 200}ms` }}>
-                      {word.thumbnail}
-                    </div>
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
                       <Play className="h-12 w-12 text-white opacity-0 group-hover:opacity-100 transition-all duration-300 transform scale-75 group-hover:scale-100 animate-pulse" />
                     </div>
-                    
+
                     {/* Difficulty Badge */}
-                    <div className={`absolute top-3 right-3 px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(word.difficulty)} backdrop-blur-sm`}>
-                      <span className="mr-1">{getDifficultyIcon(word.difficulty)}</span>
+                    <div
+                      className={`absolute top-3 right-3 px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(
+                        word.difficulty
+                      )} backdrop-blur-sm`}
+                    >
+                      <span className="mr-1">
+                        {getDifficultyIcon(word.difficulty)}
+                      </span>
                       {word.difficulty}
                     </div>
 
@@ -298,11 +505,13 @@ const Learn: React.FC = () => {
                     <p className="text-gray-600 text-sm leading-relaxed mb-4 line-clamp-2">
                       {word.description}
                     </p>
-                    
+
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
                         <Volume2 className="h-4 w-4 text-gray-400" />
-                        <span className="text-xs text-gray-500">Audio included</span>
+                        <span className="text-xs text-gray-500">
+                          Audio included
+                        </span>
                       </div>
                       <button className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 transition-colors duration-300 group-hover:translate-x-1 transform">
                         <span className="text-sm font-medium">Watch</span>
@@ -314,18 +523,28 @@ const Learn: React.FC = () => {
               ))}
             </div>
 
+            {/* Loading State */}
+            {loading && (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                <p className="mt-4 text-gray-600">Loading more signs...</p>
+              </div>
+            )}
+
             {/* No Results */}
-            {filteredWords.length === 0 && (
+            {filteredWords.length === 0 && !loading && (
               <div className="text-center py-12 animate-fade-in-up">
                 <div className="text-6xl mb-4 animate-bounce">🔍</div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">No signs found</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  No signs found
+                </h3>
                 <p className="text-gray-600 mb-4">
                   Try adjusting your search terms or difficulty filter
                 </p>
                 <button
                   onClick={() => {
-                    setSearchTerm('');
-                    setDifficultyFilter('all');
+                    setSearchTerm("");
+                    setDifficultyFilter("all");
                   }}
                   className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-300 transform hover:scale-105"
                 >
@@ -346,10 +565,17 @@ const Learn: React.FC = () => {
               <div className="flex items-center space-x-4">
                 <div className="text-3xl">{selectedWord.thumbnail}</div>
                 <div>
-                  <h2 className="text-2xl font-bold text-gray-900">{selectedWord.title}</h2>
+                  <h2 className="text-2xl font-bold text-gray-900">
+                    {selectedWord.title}
+                  </h2>
                   <div className="flex items-center space-x-3 mt-1">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(selectedWord.difficulty)}`}>
-                      {getDifficultyIcon(selectedWord.difficulty)} {selectedWord.difficulty}
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(
+                        selectedWord.difficulty
+                      )}`}
+                    >
+                      {getDifficultyIcon(selectedWord.difficulty)}{" "}
+                      {selectedWord.difficulty}
                     </span>
                     <div className="flex items-center space-x-1 text-gray-500 text-sm">
                       <Clock className="h-4 w-4" />
@@ -368,18 +594,20 @@ const Learn: React.FC = () => {
 
             {/* Video Player */}
             <div className="relative bg-gray-900 h-96 flex items-center justify-center">
-              <div className="text-center text-white">
-                <Play className="h-24 w-24 mx-auto mb-4 opacity-80 animate-pulse" />
-                <p className="text-lg font-medium">Video Player</p>
-                <p className="text-sm opacity-75 mt-2">
-                  Interactive ASL demonstration for "{selectedWord.title}"
-                </p>
-              </div>
+              <video
+                src={selectedWord.videoUrl}
+                controls
+                className="h-full w-full object-contain"
+                onError={(e) => {
+                  console.error("Video playback error:", e);
+                }}
+              />
             </div>
 
             {/* Modal Content */}
-            <div className="p-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="p-6 space-y-6">
+              {/* How to Sign */}
+              <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6">
                   <h3 className="font-semibold text-blue-900 mb-3 flex items-center">
                     <BookOpen className="h-5 w-5 mr-2" />
@@ -390,6 +618,7 @@ const Learn: React.FC = () => {
                   </p>
                 </div>
 
+                {/* Usage Tips */}
                 <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-6">
                   <h3 className="font-semibold text-purple-900 mb-3 flex items-center">
                     <MessageSquare className="h-5 w-5 mr-2" />
@@ -398,28 +627,28 @@ const Learn: React.FC = () => {
                   <ul className="text-purple-800 space-y-2 text-sm">
                     <li className="flex items-start">
                       <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                      Practice slowly at first to build muscle memory
+                      Practice slowly at first to build muscle memory.
                     </li>
                     <li className="flex items-start">
                       <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                      Maintain clear hand positioning
+                      Maintain clear hand positioning.
                     </li>
                     <li className="flex items-start">
                       <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                      Use appropriate facial expressions
+                      Use appropriate facial expressions.
                     </li>
                   </ul>
                 </div>
-              </div>
+              </section>
 
               {/* Action Buttons */}
-              <div className="flex justify-between mt-6">
-                <button className="flex items-center space-x-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-300 hover:scale-105">
+              <div className="flex flex-col md:flex-row md:justify-between gap-4">
+                <button className="flex items-center justify-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-300 hover:scale-105">
                   <Star className="h-4 w-4" />
-                  <span>Add to Favorites</span>
+                  Add to Favorites
                 </button>
-                
-                <div className="flex space-x-3">
+
+                <div className="flex gap-3">
                   <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300 hover:scale-105 shadow-lg">
                     Practice This Sign
                   </button>

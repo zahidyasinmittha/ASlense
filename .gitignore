@@ -1,25 +1,52 @@
-# Logs
-logs
-*.log
+# ─── Python / FastAPI backend ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual envs
+.venv/
+env/
+venv/
+
+# Front‑end static assets
+public/
+node_modules/
+dist/
+build/
+.eslintcache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Test, coverage & profiler output
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+cache/
+nosetests.xml
 
-# Editor directories and files
-.vscode/*
+# Packaging
+*.egg-info/
+.eggs/
+MANIFEST
+
+# Logs & runtime
+*.log
+*.pid
+*.sqlite3
+instance/
+*.db
+*.pkl
+
+# IDE / tooling
+.mypy_cache/
+*.idea/
+.vscode/
 !.vscode/extensions.json
-.idea
+
+# OS cruft
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-.env
+Thumbs.db

@@ -7,6 +7,7 @@ import Practice from './pages/Practice';
 import Translate from './pages/Translate';
 import About from './pages/About';
 import Contact from './pages/Contact';
+import CSVImporter from './pages/CsvImporter';
 
 function App() {
   return (
@@ -19,6 +20,8 @@ function App() {
           <Route path="/translate" element={<Translate />} />
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/csv" element={<CSVImporter />} />
+
         </Routes>
       </Layout>
     </Router>
