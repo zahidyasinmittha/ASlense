@@ -8,6 +8,10 @@ __pycache__/
 env/
 venv/
 
+# Environment variables
+.env
+.env.*   
+
 # Front‑end static assets
 public/
 node_modules/
