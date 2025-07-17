@@ -10,8 +10,12 @@ venv/
 
 # Environment variables
 .env
-.env.*   
-
+.env.*  
+hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth 
+bone_motion_wights-checkpoint-epoch291.pt
+bone_wights-checkpoint-epoch245.pt
+joints_weights-checkpoint-epoch293.pt
+joint_motion_wights-checkpoint-epoch267.pt
 # Front‑end static assets
 public/
 node_modules/
