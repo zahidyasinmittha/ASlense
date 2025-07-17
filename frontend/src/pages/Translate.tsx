@@ -17,7 +17,7 @@ const Translate: React.FC = () => {
   ]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (isRecording) {
       interval = setInterval(() => {
         setSessionStats(prev => ({ ...prev, time: prev.time + 1 }));

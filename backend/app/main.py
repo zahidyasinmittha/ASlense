@@ -1,40 +1,103 @@
 # app/main.py
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
+import time
+import os
 
-from app.db import engine                     
+from app.core.database import engine, get_db
 from app.models import Base, Video
-from app.routers import learn, translate, practice
+from app.api.v1.api import api_router
+from app.core.config import settings
+from app.auth import create_default_admin
 
 from sqladmin import Admin
-from app.db import engine
 from sqladmin.models import ModelView
 
+app = FastAPI(
+    title="ASLense API",
+    description="ASL Video Learning Platform with Authentication",
+    version="2.0.0"
+)
 
-
-app = FastAPI()
-
-class YourModelAdmin(ModelView, model=Video):
+class VideoAdmin(ModelView, model=Video):
     column_list = [Video.id, Video.title, Video.category, Video.difficulty]
+    column_searchable_list = [Video.title, Video.word, Video.category]
+    column_filters = [Video.category, Video.difficulty]
 
 admin = Admin(app, engine)
-admin.add_view(YourModelAdmin)
+admin.add_view(VideoAdmin)
 
+# Logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"📥 {request.method} {request.url.path}")
+    response = await call_next(request)
+    print(f"📤 {request.method} {request.url.path} - {response.status_code}")
+    return response
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 
+# Mount static files for thumbnails
+thumbnail_dir = settings.THUMBNAIL_DIR
+if not thumbnail_dir.exists():
+    thumbnail_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/thumbnails", StaticFiles(directory=str(thumbnail_dir)), name="thumbnails")
 
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-# router mounting
-app.include_router(learn.router,     prefix="/learn")
-# app.include_router(translate.router, prefix="/translate")
-# app.include_router(practice.router,  prefix="/practice")
+# Create default admin user on startup
+@app.on_event("startup")
+async def startup_event():
+    db = next(get_db())
+    try:
+        create_default_admin(db)
+        print("✅ Default admin user checked/created")
+    except Exception as e:
+        print(f"❌ Error creating default admin: {e}")
+    finally:
+        db.close()
+
+# Root endpoint
+@app.get("/")
+async def root():
+    return {
+        "message": "ASLense API v2.0", 
+        "status": "active",
+        "features": [
+            "User Authentication",
+            "Progress Tracking", 
+            "Admin Dashboard",
+            "Enhanced Predictions",
+            "Practice History"
+        ]
+    }
+
+# Health check
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "version": "2.0.0"}
+
+# Router mounting - Use the organized API structure
+app.include_router(api_router, prefix="/api/v1")
+
+# Legacy routes for backward compatibility (will be deprecated)
+# These can be removed once frontend is updated to use /api/v1 prefix
+from app.api.v1.endpoints import auth, user, videos, learn, practice, admin
+
+# Mount individual routers for backward compatibility
+app.include_router(auth.router, prefix="/auth", tags=["auth-legacy"])
+app.include_router(user.router, prefix="/user", tags=["user-legacy"])
+app.include_router(videos.router, prefix="/videos", tags=["videos-legacy"])
+app.include_router(learn.router, prefix="/learn", tags=["learn-legacy"])
+app.include_router(practice.router, prefix="/practice", tags=["practice-legacy"])
+app.include_router(admin.router, prefix="/admin-api", tags=["admin-legacy"])

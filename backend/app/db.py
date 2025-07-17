@@ -1,12 +1,9 @@
 # app/db.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
-import os
+from app.core.config import settings
 
-load_dotenv()  # Load from .env file
-
-DATABASE_URL = os.getenv('DATABASE_URL')      # update to Postgres later if needed
+DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(
     DATABASE_URL,

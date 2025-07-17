@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, Hand, Mail, Phone, MapPin, Github, Linkedin, Twitter, Heart } from 'lucide-react';
+import { Menu, X, Hand, Mail, Phone, MapPin, Github, Linkedin, Twitter, Heart, User, LogOut, Settings } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -8,13 +9,15 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const location = useLocation();
+  const { user, logout, isAdmin } = useAuth();
 
   const navItems = [
     { name: 'Home', path: '/' },
     { name: 'Learn', path: '/learn' },
     { name: 'Practice', path: '/practice' },
-    { name: 'Translate', path: '/translate' },
+    // { name: 'Translate', path: '/translate' }, // Commented out per user request
     { name: 'About', path: '/about' },
     { name: 'Contact', path: '/contact' },
   ];
@@ -65,7 +68,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </Link>
 
             {/* Desktop Navigation */}
-            <div className="hidden md:flex space-x-1">
+            <div className="hidden md:flex items-center space-x-1">
               {navItems.map((item, index) => (
                 <Link
                   key={item.name}
@@ -83,6 +86,52 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   )}
                 </Link>
               ))}
+              
+              {/* Authentication buttons */}
+              <div className="ml-4 flex items-center space-x-3">
+                {user ? (
+                  <div className="flex items-center space-x-3">
+                    <Link
+                      to="/dashboard"
+                      className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-all duration-300"
+                    >
+                      <User className="h-4 w-4" />
+                      <span>{user.username}</span>
+                    </Link>
+                    {isAdmin && (
+                      <Link
+                        to="/admin"
+                        className="px-3 py-2 text-sm font-medium text-red-700 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-300"
+                      >
+                        <Settings className="h-4 w-4 inline mr-1" />
+                        Admin
+                      </Link>
+                    )}
+                    <button
+                      onClick={logout}
+                      className="flex items-center space-x-1 px-3 py-2 text-sm font-medium text-gray-700 hover:text-red-600 hover:bg-gray-50 rounded-lg transition-all duration-300"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <Link
+                      to="/login"
+                      className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-all duration-300"
+                    >
+                      Sign In
+                    </Link>
+                    <Link
+                      to="/register"
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all duration-300 shadow-sm"
+                    >
+                      Sign Up
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Mobile menu button */}

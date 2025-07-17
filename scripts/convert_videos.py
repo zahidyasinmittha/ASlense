@@ -10,7 +10,7 @@ import csv, json, subprocess, tempfile, os
 from pathlib import Path
 
 # ── configuration ──────────────────────────────────────────────────────────
-CSV_PATH  = Path(r"E:\asl_videos_nlp_enhanced_updated.csv")                 # your TSV file (tab‑separated)
+CSV_PATH  = Path(r"sample_videos.csv")                 # your TSV file (tab‑separated)
 DATA_DIR  = Path(r"E:\final_dataset_videos")   # folder with the videos
 FFMPEG    = "ffmpeg"                           # must be in PATH
 FFPROBE   = "ffprobe"                          # must be in PATH

@@ -2,7 +2,7 @@ import subprocess, json
 from pathlib import Path
 
 # ── videos to test ─────────────────────────────────────────────────────────
-video1 = Path(r"E:\final_dataset_videos\A.mp4")            # ← not playing
+video1 = Path(r"E:\final_dataset_videos\he_video_5")            # ← not playing
 video2 = Path(r"E:\final_dataset_videos\5798535143557326-QM.mp4")  # ← plays
 videos = [video1, video2]
 

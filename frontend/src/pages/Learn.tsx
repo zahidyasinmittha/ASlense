@@ -15,18 +15,38 @@ import {
   Filter,
   Volume2,
 } from "lucide-react";
+import VideoPlayer from "../components/VideoPlayer";
+import { useAuth } from "../contexts/AuthContext";
 
 const Learn: React.FC = () => {
-  const baseUrl   = import.meta.env.VITE_BACKEND_BASEURL;
+  const baseUrl = import.meta.env.VITE_BACKEND_BASEURL;
+  const { user, token, makeAuthenticatedRequest } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState("Alphabet");
   const [selectedWord, setSelectedWord] = useState<any>(null);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("all");
-  const [vidos, setVideos] = useState<Video[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+
+  // User progress state
+  const [userProgress, setUserProgress] = useState({
+    signs_practiced: 0,
+    signs_learned: 0,
+    total_signs: 136,
+    accuracy_rate: 0.0,
+    current_level: 'Beginner',
+    current_xp: 0,
+    next_level_xp: 100,
+    level_progress: 0,
+    practice_streak: 0,
+    total_practice_time: 0,
+    signs_mastered: 0,
+    experience_points: 0,
+    level: 'Beginner'
+  });
+  // Note: totalSigns removed as we now use userProgress.total_signs throughout
 
   const categories = [
     {
@@ -67,6 +87,7 @@ const Learn: React.FC = () => {
     difficulty: "Beginner" | "Intermediate" | "Advanced";
     duration: string;
     thumbnail: string;
+    thumbnailUrl?: string;
     videoUrl: string;
     category: string;
     word: string;
@@ -81,9 +102,29 @@ const Learn: React.FC = () => {
   const [currentWords, setCurrentWords] = useState<Video[]>([]);
   const [filteredWords, setFilteredWords] = useState<Video[]>([]);
 
+  // Fetch user progress data
+  const fetchUserProgress = async () => {
+    if (!user || !token) return;
+    
+    try {
+      const response = await makeAuthenticatedRequest(`${baseUrl}/user/progress`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Learn page received progress data:', data);
+        setUserProgress(data);
+      }
+    } catch (error) {
+      console.error('Error fetching user progress:', error);
+    }
+  };
+
+  // Load user progress on component mount
+  useEffect(() => {
+    fetchUserProgress();
+  }, [user, token]);
+
   // Reset all data when category changes
   useEffect(() => {
-    setVideos([]);
     setCurrentWords([]);
     setFilteredWords([]);
     setPage(1);
@@ -111,23 +152,21 @@ const Learn: React.FC = () => {
           difficulty: v.difficulty || "Beginner",
           duration: v.duration || "30s",
           videoUrl: `${baseUrl}/learn/stream/${v.video_file}`,
-          thumbnail:encodeURIComponent(v.thumbnail) || "📹",
+          thumbnailUrl: v.thumbnail ? `/thumbnails/${encodeURIComponent(v.thumbnail)}` : undefined,
+          thumbnail: v.thumbnail || "📹",
           category: v.category || "",
           word: v.word || "",
         }));
 
+        console.log("Fetched videos:", newVideos);
+
+
         if (page === 1) {
           // First page - replace all data
-          setVideos(newVideos);
           setCurrentWords(newVideos);
           setFilteredWords(newVideos);
         } else {
           // Subsequent pages - append new videos without duplicates
-          setVideos((prev) => {
-            const existingIds = new Set(prev.map((v) => v.id));
-            const uniqueNew = newVideos.filter((v) => !existingIds.has(v.id));
-            return [...prev, ...uniqueNew];
-          });
           setCurrentWords((prev) => {
             const existingIds = new Set(prev.map((v) => v.id));
             const uniqueNew = newVideos.filter((v) => !existingIds.has(v.id));
@@ -149,16 +188,16 @@ const Learn: React.FC = () => {
         setLoading(false);
       }
     };
-
     fetchVideos();
   }, [selectedCategory, page]);
 
-  // Handle infinite scroll
+  // Handle infinite scroll for the video container
   useEffect(() => {
-    const handleScroll = () => {
+    const handleScroll = (event: Event) => {
+      const container = event.target as HTMLElement;
       if (
-        window.innerHeight + document.documentElement.scrollTop >=
-          document.documentElement.offsetHeight - 100 &&
+        container.scrollTop + container.clientHeight >=
+          container.scrollHeight - 100 &&
         !loading &&
         hasMore &&
         searchTerm === "" &&
@@ -168,8 +207,12 @@ const Learn: React.FC = () => {
       }
     };
 
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
+    // Find the video container and add scroll listener
+    const videoContainer = document.querySelector('.video-scroll-container');
+    if (videoContainer) {
+      videoContainer.addEventListener("scroll", handleScroll);
+      return () => videoContainer.removeEventListener("scroll", handleScroll);
+    }
   }, [loading, hasMore, searchTerm, difficultyFilter]);
 
   // Handle search and filtering
@@ -195,7 +238,8 @@ const Learn: React.FC = () => {
               difficulty: v.difficulty || "Beginner",
               duration: v.duration || "30s",
               videoUrl: `${baseUrl}/learn/stream/${v.video_file}`,
-              thumbnail: encodeURIComponent(v.thumbnail) || "📹",
+              thumbnailUrl: v.thumbnail ? `/thumbnails/${encodeURIComponent(v.thumbnail)}` : undefined,
+              thumbnail: v.thumbnail || "📹",
               category: v.category || "",  
               word: v.word || "",
             })
@@ -271,7 +315,7 @@ const Learn: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="text-center mb-12 animate-fade-in-up">
           <div className="relative group mb-6">
@@ -354,7 +398,7 @@ const Learn: React.FC = () => {
               </div>
 
               {/* Categories */}
-              <nav className="space-y-2 stagger-animation">
+              <nav className="space-y-2 stagger-animation mb-6">
                 {categories.map((category) => {
                   const Icon = category.icon;
                   return (
@@ -392,28 +436,94 @@ const Learn: React.FC = () => {
                 })}
               </nav>
 
-              {/* Progress Summary */}
-              <div className="mt-8 p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg animate-scale-in animation-delay-500">
-                <h3 className="font-semibold text-gray-900 mb-3 flex items-center">
-                  <Trophy className="h-4 w-4 text-yellow-500 mr-2 animate-bounce" />
+              {/* Enhanced Progress Summary */}
+              <div className="mt-8 p-6 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl shadow-sm animate-scale-in animation-delay-500 border border-blue-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                  <Trophy className="h-5 w-5 text-blue-600 mr-2" />
                   Your Progress
                 </h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Signs Learned</span>
-                    <span className="font-medium text-blue-600">47/136</span>
+                
+                {user && token ? (
+                  <>
+                    {/* Signs Learned Progress */}
+                    <div className="mb-6">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm font-medium text-gray-700">Signs Learned</span>
+                        <span className="text-sm font-bold text-blue-600">
+                          {userProgress.signs_learned}/{userProgress.total_signs}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div 
+                          className="h-3 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-1000"
+                          style={{ width: `${userProgress.total_signs > 0 ? (userProgress.signs_learned / userProgress.total_signs) * 100 : 0}%` }}
+                        ></div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {userProgress.total_signs > 0 ? Math.round((userProgress.signs_learned / userProgress.total_signs) * 100 * 10) / 10 : 0}% Complete
+                      </div>
+                    </div>
+
+                    {/* Level Progress */}
+                    <div className="mb-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm font-medium text-gray-700">Level</span>
+                        <span className="text-sm font-bold text-purple-600">{userProgress.current_level}</span>
+                      </div>
+                      <div className="flex items-center space-x-2 text-xs text-gray-600 mb-1">
+                        <span>{userProgress.current_xp} XP</span>
+                        <span>•</span>
+                        <span>Next level: {userProgress.next_level_xp} XP</span>
+                      </div>
+                      <div className="flex items-center space-x-2 text-xs text-gray-600">
+                        <span>Beginner</span>
+                        <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-1 bg-gradient-to-r from-green-400 to-blue-500 rounded-full transition-all duration-1000" 
+                            style={{ width: `${Math.max(0, Math.min(100, userProgress.level_progress || 0))}%` }}
+                          ></div>
+                        </div>
+                        <span>Expert</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Stats Grid */}
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div className="text-center p-3 bg-white/60 rounded-lg">
+                        <div className="text-lg font-bold text-blue-600">{userProgress.signs_mastered}</div>
+                        <div className="text-xs text-gray-600">Signs Mastered</div>
+                      </div>
+                      <div className="text-center p-3 bg-white/60 rounded-lg">
+                        <div className="text-lg font-bold text-green-600">
+                          {Math.max(0, userProgress.total_signs - userProgress.signs_learned)}
+                        </div>
+                        <div className="text-xs text-gray-600">Signs Remaining</div>
+                      </div>
+                    </div>
+
+                    {/* Additional Stats */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="text-center p-3 bg-white/40 rounded-lg">
+                        <div className="text-lg font-bold text-purple-600">{userProgress.accuracy_rate.toFixed(1)}%</div>
+                        <div className="text-xs text-gray-600">Accuracy</div>
+                      </div>
+                      <div className="text-center p-3 bg-white/40 rounded-lg">
+                        <div className="text-lg font-bold text-orange-600">{userProgress.practice_streak}</div>
+                        <div className="text-xs text-gray-600">Day Streak</div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-6 text-gray-500">
+                    <div className="mb-3">
+                      <BookOpen className="h-12 w-12 mx-auto text-gray-300" />
+                    </div>
+                    <p className="text-sm font-medium text-gray-600 mb-2">Login Required</p>
+                    <p className="text-xs text-gray-500">
+                      Please log in to track your learning progress
+                    </p>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div
-                      className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-1000 animate-shimmer"
-                      style={{ width: "35%" }}
-                    ></div>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-500">
-                    <span>Beginner</span>
-                    <span>Expert</span>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -459,102 +569,125 @@ const Learn: React.FC = () => {
               </div>
             </div>
 
-            {/* Words Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 stagger-animation">
-              {filteredWords.map((word, index) => (
-                <div
-                  key={`video-${word.id}-${selectedCategory}-${index}`}
-                  onClick={() => openVideoModal(word)}
-                  className="group bg-white rounded-xl shadow-sm hover:shadow-xl transition-all duration-500 transform hover:scale-105 cursor-pointer word-card animate-scale-in"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  {/* Thumbnail */}
-                  <div
-                    className="relative bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 h-48 rounded-t-xl flex items-center justify-center overflow-hidden"
-                    style={{ backgroundImage: `url(thumbnails/${word.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
-                    <div className="absolute inset-0 bg-black/20"></div>
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
-                      <Play className="h-12 w-12 text-white opacity-0 group-hover:opacity-100 transition-all duration-300 transform scale-75 group-hover:scale-100 animate-pulse" />
-                    </div>
-
-                    {/* Difficulty Badge */}
+            {/* Videos Container with Independent Scrolling */}
+            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-right relative">
+              <div className="h-[98vh] overflow-y-auto scrollbar-thin scrollbar-thumb-blue-400 scrollbar-track-gray-100 scroll-smooth video-scroll-container">
+                {/* Videos Grid - This scrolls independently */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 stagger-animation pb-6">
+                  {filteredWords.map((word, index) => (
                     <div
-                      className={`absolute top-3 right-3 px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(
-                        word.difficulty
-                      )} backdrop-blur-sm`}
+                      key={`video-${word.id}-${selectedCategory}-${index}`}
+                      onClick={() => openVideoModal(word)}
+                      className="group bg-white rounded-xl shadow-sm hover:shadow-xl transition-all duration-500 transform hover:scale-105 cursor-pointer word-card animate-scale-in"
+                      style={{ animationDelay: `${index * 100}ms` }}
                     >
-                      <span className="mr-1">
-                        {getDifficultyIcon(word.difficulty)}
-                      </span>
-                      {word.difficulty}
-                    </div>
+                      {/* Thumbnail */}
+                      <div
+                        className="relative bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 h-48 rounded-t-xl flex items-center justify-center overflow-hidden"
+                        style={{ 
+                          backgroundImage: word.thumbnailUrl ? `url(${word.thumbnailUrl})` : undefined, 
+                          backgroundSize: 'cover', 
+                          backgroundPosition: 'center' 
+                        }}
+                      >
+                        <div className="absolute inset-0 bg-black/20"></div>
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
+                          <Play className="h-12 w-12 text-white opacity-0 group-hover:opacity-100 transition-all duration-300 transform scale-75 group-hover:scale-100 animate-pulse" />
+                        </div>
 
-                    {/* Duration Badge */}
-                    <div className="absolute bottom-3 left-3 flex items-center space-x-1 bg-black/50 backdrop-blur-sm rounded-full px-2 py-1 text-white text-xs">
-                      <Clock className="h-3 w-3" />
-                      <span>{word.duration}</span>
-                    </div>
-                  </div>
+                        {/* Difficulty Badge */}
+                        <div
+                          className={`absolute top-3 right-3 px-2 py-1 rounded-full text-xs font-medium border ${getDifficultyColor(
+                            word.difficulty
+                          )} backdrop-blur-sm`}
+                        >
+                          <span className="mr-1">
+                            {getDifficultyIcon(word.difficulty)}
+                          </span>
+                          {word.difficulty}
+                        </div>
 
-                  {/* Content */}
-                  <div className="p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors duration-300">
-                      {word.title}
-                    </h3>
-                    <p className="text-gray-600 text-sm leading-relaxed mb-4 line-clamp-2">
-                      {word.description}
-                    </p>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Volume2 className="h-4 w-4 text-gray-400" />
-                        <span className="text-xs text-gray-500">
-                          Audio included
-                        </span>
+                        {/* Duration Badge */}
+                        <div className="absolute bottom-3 left-3 flex items-center space-x-1 bg-black/50 backdrop-blur-sm rounded-full px-2 py-1 text-white text-xs">
+                          <Clock className="h-3 w-3" />
+                          <span>{word.duration}</span>
+                        </div>
                       </div>
-                      <button className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 transition-colors duration-300 group-hover:translate-x-1 transform">
-                        <span className="text-sm font-medium">Watch</span>
-                        <Play className="h-4 w-4" />
+
+                      {/* Content */}
+                      <div className="p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors duration-300">
+                          {word.title}
+                        </h3>
+                        <p className="text-gray-600 text-sm leading-relaxed mb-4 line-clamp-2">
+                          {word.description}
+                        </p>
+
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Volume2 className="h-4 w-4 text-gray-400" />
+                            <span className="text-xs text-gray-500">
+                              Audio included
+                            </span>
+                          </div>
+                          <button className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 transition-colors duration-300 group-hover:translate-x-1 transform">
+                            <span className="text-sm font-medium">Watch</span>
+                            <Play className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Loading State */}
+                  {loading && (
+                    <div className="col-span-full text-center py-8">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="mt-4 text-gray-600">Loading more signs...</p>
+                    </div>
+                  )}
+
+                  {/* No Results */}
+                  {filteredWords.length === 0 && !loading && (
+                    <div className="col-span-full text-center py-12 animate-fade-in-up">
+                      <div className="text-6xl mb-4 animate-bounce">🔍</div>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                        No signs found
+                      </h3>
+                      <p className="text-gray-600 mb-4">
+                        Try adjusting your search terms or difficulty filter
+                      </p>
+                      <button
+                        onClick={() => {
+                          setSearchTerm("");
+                          setDifficultyFilter("all");
+                        }}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-300 transform hover:scale-105"
+                      >
+                        Clear Filters
                       </button>
                     </div>
-                  </div>
+                  )}
                 </div>
-              ))}
+              </div>
+              
+              {/* Scroll to Top Button for Video Area */}
+              <button
+                onClick={() => {
+                  const container = document.querySelector('.video-scroll-container');
+                  container?.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="absolute bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-110"
+                title="Scroll to top"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
+              </button>
             </div>
-
-            {/* Loading State */}
-            {loading && (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="mt-4 text-gray-600">Loading more signs...</p>
-              </div>
-            )}
-
-            {/* No Results */}
-            {filteredWords.length === 0 && !loading && (
-              <div className="text-center py-12 animate-fade-in-up">
-                <div className="text-6xl mb-4 animate-bounce">🔍</div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                  No signs found
-                </h3>
-                <p className="text-gray-600 mb-4">
-                  Try adjusting your search terms or difficulty filter
-                </p>
-                <button
-                  onClick={() => {
-                    setSearchTerm("");
-                    setDifficultyFilter("all");
-                  }}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-300 transform hover:scale-105"
-                >
-                  Clear Filters
-                </button>
-              </div>
-            )}
           </div>
         </div>
-      </div>
+    </div>
 
       {/* Video Modal */}
       {isVideoModalOpen && selectedWord && (
@@ -592,15 +725,13 @@ const Learn: React.FC = () => {
               </button>
             </div>
 
-            {/* Video Player */}
-            <div className="relative bg-gray-900 h-96 flex items-center justify-center">
-              <video
+            {/* Enhanced Video Player */}
+            <div className="relative bg-gray-900 rounded-lg overflow-hidden">
+              <VideoPlayer
                 src={selectedWord.videoUrl}
-                controls
-                className="h-full w-full object-contain"
-                onError={(e) => {
-                  console.error("Video playback error:", e);
-                }}
+                thumbnail={selectedWord.thumbnailUrl}
+                title={selectedWord.title}
+                className="w-full"
               />
             </div>
 
