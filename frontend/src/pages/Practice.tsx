@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { 
   Camera, CameraOff, RotateCcw, Target, CheckCircle, AlertCircle, 
   Zap, TrendingUp, Award, Timer, BarChart3, Upload, 
-  Video, RefreshCw, Trophy, Star, Wifi, WifiOff, Search, ChevronDown, User
+  Video, RefreshCw, Trophy, Star, Wifi, Search, ChevronDown, User
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
