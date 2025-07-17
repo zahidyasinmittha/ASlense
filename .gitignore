@@ -11,6 +11,11 @@ venv/
 # Environment variables
 .env
 .env.*  
+
+*.pt
+*.pth
+# Model weights
+# These are large files, so we don't want to track them in git.
 hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth 
 bone_motion_wights-checkpoint-epoch291.pt
 bone_wights-checkpoint-epoch245.pt
