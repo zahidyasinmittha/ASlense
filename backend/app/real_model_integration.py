@@ -521,34 +521,3 @@ def predict_video_with_model(video_path: str, model_type: str = "mini") -> List[
             {"word": "Processing", "confidence": 0.000000, "rank": 3},
             {"word": "Video", "confidence": 0.000000, "rank": 4}
         ]
-
-def predict_frame_with_model(frame: np.ndarray, model_type: str = "mini") -> List[Dict]:
-    """
-    For single frame prediction (camera mode)
-    Note: Single frames won't give good results as the models need sequences
-    """
-    try:
-        # For single frame, return a simplified prediction
-        # Real GCN models need temporal sequences, not single frames
-        common_words = ["hello", "thank you", "please", "sorry", "yes", "no"]
-        
-        import random
-        selected_words = random.sample(common_words, min(4, len(common_words)))
-        base_confidence = 0.75 if model_type == "pro" else 0.68
-        
-        predictions = []
-        for i, word in enumerate(selected_words):
-            confidence = base_confidence - (i * 0.08) + random.uniform(-0.05, 0.03)
-            confidence = max(0.2, min(0.85, confidence))
-            
-            predictions.append({
-                "word": word,
-                "confidence": round(confidence, 6),
-                "rank": i + 1
-            })
-        
-        return predictions
-        
-    except Exception as e:
-        print(f"Error in frame prediction: {e}")
-        return [{"word": "Error", "confidence": 0.000000, "rank": 1}]

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import cv2
@@ -7,14 +7,11 @@ import tempfile
 import os
 import asyncio
 import json
-import base64
 from typing import List, Dict, Optional
-import threading
-import time
 
 from app.core.database import get_db
 from app.models import Video, User, UserProgress
-from app.real_model_integration import get_pro_model, get_mini_model, predict_video_with_model, predict_frame_with_model
+from app.real_model_integration import get_pro_model, get_mini_model, predict_video_with_model
 from app.auth import get_current_active_user
 from app.schemas import EnhancedPredictionResult, PredictionHistoryCreate, UserProgressUpdate
 from app.services.user_service import PredictionService, ProgressService
@@ -138,18 +135,6 @@ async def predict_video(
         print(f"Error in video prediction: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
 
-async def process_frame_with_model(frame, model_type: str = "mini") -> List[Dict]:
-    """
-    Process a single frame with the model for live prediction
-    """
-    try:
-        predictions = predict_frame_with_model(frame, model_type)
-        return predictions
-        
-    except Exception as e:
-        print(f"Error processing frame: {e}")
-        return [{"word": "Error", "confidence": 0.0, "rank": 1}]
-
 @router.get("/available-words")
 async def get_available_words(db: Session = Depends(get_db)):
     """
@@ -213,114 +198,6 @@ async def get_models_status():
     }
     
     return status
-
-@router.post("/predict-frames")
-async def predict_frames(
-    request_data: dict,
-    db: Session = Depends(get_db)
-):
-    """
-    Predict ASL sign from a sequence of frames (base64 encoded)
-    Used for live camera capture
-    """
-    try:
-        frames = request_data.get("frames", [])
-        target_word = request_data.get("target_word", "")
-        model_type = request_data.get("model_type", "mini")
-        
-        if not frames:
-            raise HTTPException(status_code=400, detail="No frames provided")
-        
-        if model_type not in ["pro", "mini"]:
-            raise HTTPException(status_code=400, detail="Model type must be 'pro' or 'mini'")
-        
-        # Convert base64 frames to OpenCV format
-        cv_frames = []
-        for frame_b64 in frames:
-            # Decode base64 to image
-            frame_data = base64.b64decode(frame_b64)
-            nparr = np.frombuffer(frame_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if frame is not None:
-                cv_frames.append(frame)
-        
-        if not cv_frames:
-            raise HTTPException(status_code=400, detail="No valid frames found")
-        
-        # Use the last frame for prediction (could be enhanced to use sequence)
-        predictions = predict_frame_with_model(cv_frames[-1], model_type)
-        
-        # Enhance prediction result
-        enhanced_result = enhance_prediction_result(predictions, target_word, model_type)
-        
-        return enhanced_result
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Frame prediction failed: {str(e)}")
-
-@router.websocket("/live-predict")
-async def websocket_live_predict(websocket: WebSocket):
-    """
-    WebSocket endpoint for live ASL sign prediction
-    Accepts frames and returns real-time predictions
-    """
-    await websocket.accept()
-    
-    try:
-        while True:
-            # Receive frame data from frontend
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            if message.get("type") == "stop":
-                break
-            elif message.get("type") == "frame":
-                # Extract frame data
-                frame_b64 = message.get("frame", "")
-                target_word = message.get("target_word", "")
-                model_type = message.get("model_type", "mini")
-                
-                if frame_b64:
-                    try:
-                        # Decode base64 frame
-                        frame_data = base64.b64decode(frame_b64)
-                        nparr = np.frombuffer(frame_data, np.uint8)
-                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        
-                        if frame is not None:
-                            # Get predictions
-                            predictions = predict_frame_with_model(frame, model_type)
-                            
-                            # Send predictions back to frontend
-                            response = {
-                                "type": "predictions",
-                                "predictions": predictions[:4],
-                                "timestamp": time.time()
-                            }
-                            
-                            await websocket.send_text(json.dumps(response))
-                    
-                    except Exception as e:
-                        error_response = {
-                            "type": "error",
-                            "message": f"Frame processing error: {str(e)}",
-                            "timestamp": time.time()
-                        }
-                        await websocket.send_text(json.dumps(error_response))
-                        
-    except WebSocketDisconnect:
-        print("WebSocket client disconnected")
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        try:
-            error_response = {
-                "type": "error", 
-                "message": f"WebSocket error: {str(e)}",
-                "timestamp": time.time()
-            }
-            await websocket.send_text(json.dumps(error_response))
-        except:
-            pass
 
 
 @router.post("/predict-with-user")
