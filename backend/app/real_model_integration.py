@@ -64,6 +64,17 @@ class EnsembleVideoPredictor:
         self.label2word = {}
         self._initialize()
     
+    def _resize_frame(self, frame):
+        """Resize frame to 384x288 to prevent tensor size mismatches"""
+        if frame is None:
+            return None
+        return cv2.resize(frame, (384, 288))
+    
+    def _hrnet_worker_wrapper(self, frame, hrnet):
+        """Wrapper around hrnet_worker that resizes frames"""
+        resized_frame = self._resize_frame(frame)
+        return self.hrnet_worker(resized_frame, hrnet)
+    
     def _initialize(self):
         """Initialize using the original ensemble.py setup"""
         try:
@@ -132,7 +143,7 @@ class EnsembleVideoPredictor:
             if f0 is None:
                 raise ValueError("Could not read first frame from video")
                 
-            future = pool.submit(self.hrnet_worker, f0, self.hrnet)
+            future = pool.submit(self._hrnet_worker_wrapper, f0, self.hrnet)
             next_frame = vs.read() if vs.more() else None
             
             buf = []
@@ -140,7 +151,7 @@ class EnsembleVideoPredictor:
             gcn_event = gcn_logits = None
             all_predictions = []
             
-            print("[Run] Processing video with original ensemble pipeline...")
+            print("Processing video with ensemble pipeline...")
             
             while future:
                 kp, vis = future.result()
@@ -148,25 +159,34 @@ class EnsembleVideoPredictor:
                 
                 # Launch HRNet on frame k+1 (original logic)
                 if next_frame is not None:
-                    future = pool.submit(self.hrnet_worker, next_frame, self.hrnet)
+                    future = pool.submit(self._hrnet_worker_wrapper, next_frame, self.hrnet)
                     next_frame = vs.read() if vs.more() else None
                 else:
                     future = None
                 
                 # Poll async GCN (original logic)
                 if gcn_event and gcn_event.query():
-                    top_ids = torch.topk(gcn_logits, 4).indices.tolist()
-                    top_words = [self.label2word.get(i, f"<{i}>") for i in top_ids]
-                    top_probs = torch.topk(torch.softmax(gcn_logits, 0), 4).values.tolist()
+                    # Get ALL predictions by sorting all logits
+                    softmax_probs = torch.softmax(gcn_logits, 0)
+                    all_probs, all_ids = torch.sort(softmax_probs, descending=True)
                     
-                    print(f"[{fid:06d}] Top-1 = {top_words[0]:<20} Top-4 = {top_words}")
+                    # Convert to lists for processing
+                    all_ids = all_ids.tolist()
+                    all_probs = all_probs.tolist()
+                    all_words = [self.label2word.get(i, f"<{i}>") for i in all_ids]
                     
-                    # Store this prediction
+                    # Show top 4 for display purposes
+                    top_4_words = all_words[:4]
+                    # Minimal logging - only show progress occasionally
+                    if fid % 10 == 0:  # Every 10th frame
+                        print(f"[Frame {fid}] Current: {top_4_words[0]}")
+                    
+                    # Store ALL predictions (not just top 4)
                     prediction = []
-                    for i, (word, prob) in enumerate(zip(top_words, top_probs)):
+                    for i, (word, prob) in enumerate(zip(all_words, all_probs)):
                         prediction.append({
                             "word": word,
-                            "confidence": round(prob, 3),
+                            "confidence": round(prob, 6),
                             "rank": i + 1
                         })
                     all_predictions.append(prediction)
@@ -201,10 +221,10 @@ class EnsembleVideoPredictor:
             else:
                 # If no predictions were made, return default
                 return [
-                    {"word": "No prediction", "confidence": 0.0, "rank": 1},
-                    {"word": "Video too short", "confidence": 0.0, "rank": 2},
-                    {"word": "Try longer video", "confidence": 0.0, "rank": 3},
-                    {"word": "Or better lighting", "confidence": 0.0, "rank": 4}
+                    {"word": "No prediction", "confidence": 0.000000, "rank": 1},
+                    {"word": "Video too short", "confidence": 0.000000, "rank": 2},
+                    {"word": "Try longer video", "confidence": 0.000000, "rank": 3},
+                    {"word": "Or better lighting", "confidence": 0.000000, "rank": 4}
                 ]
                 
         except Exception as e:
@@ -214,37 +234,32 @@ class EnsembleVideoPredictor:
 
     def _aggregate_predictions(self, all_predictions: List[List[Dict]]) -> List[Dict]:
         """
-        Aggregate predictions from multiple frames by averaging confidence scores
+        Show each frame batch prediction, then combine ALL predictions by summing confidence scores
+        Return top 4 words with highest total sums
         """
-        word_scores = {}
+        print(f"Combining {len(all_predictions)} frame batches...")
         
-        # Collect all confidence scores for each word
-        for frame_predictions in all_predictions:
-            for pred in frame_predictions:
+        # Combine ALL predictions by summing confidence scores
+        word_total_scores = {}
+        
+        for batch_idx, frame_predictions in enumerate(all_predictions):
+            for pred in frame_predictions:  # Consider ALL predictions, not just top 4
                 word = pred["word"]
                 confidence = pred["confidence"]
                 
-                if word not in word_scores:
-                    word_scores[word] = []
-                word_scores[word].append(confidence)
+                if word not in word_total_scores:
+                    word_total_scores[word] = 0.0
+                
+                word_total_scores[word] += confidence
         
-        # Calculate average confidence for each word
-        word_avg_scores = {}
-        for word, scores in word_scores.items():
-            # Use weighted average - more recent predictions have slightly higher weight
-            weights = [1.0 + (i * 0.1) for i in range(len(scores))]
-            weighted_sum = sum(score * weight for score, weight in zip(scores, weights))
-            total_weight = sum(weights)
-            word_avg_scores[word] = weighted_sum / total_weight
-        
-        # Sort by average confidence and return top 4
-        sorted_words = sorted(word_avg_scores.items(), key=lambda x: x[1], reverse=True)
+        # Final calculation - sort by total sum (not average)
+        sorted_words = sorted(word_total_scores.items(), key=lambda x: x[1], reverse=True)
         
         result = []
-        for i, (word, avg_confidence) in enumerate(sorted_words[:4]):
+        for i, (word, total_score) in enumerate(sorted_words[:4]):
             result.append({
                 "word": word,
-                "confidence": round(avg_confidence, 3),
+                "confidence": round(total_score, 6),  # Use total sum as confidence
                 "rank": i + 1
             })
         
@@ -252,11 +267,11 @@ class EnsembleVideoPredictor:
         while len(result) < 4:
             result.append({
                 "word": f"prediction_{len(result) + 1}",
-                "confidence": 0.1,
+                "confidence": 0.100000,
                 "rank": len(result) + 1
             })
         
-        print(f"[Aggregated] Combined {len(all_predictions)} frame predictions -> Top-4: {[p['word'] for p in result]}")
+        print(f"Final result: {[p['word'] for p in result]}")
         return result
 
 class LiveFastVideoPredictor:
@@ -269,6 +284,17 @@ class LiveFastVideoPredictor:
         self.hrnet = None
         self.label2word = {}
         self._initialize()
+    
+    def _resize_frame(self, frame):
+        """Resize frame to 384x288 to prevent tensor size mismatches"""
+        if frame is None:
+            return None
+        return cv2.resize(frame, (384, 288))
+    
+    def _hrnet_worker_wrapper(self, frame, hrnet):
+        """Wrapper around hrnet_worker that resizes frames"""
+        resized_frame = self._resize_frame(frame)
+        return self.hrnet_worker(resized_frame, hrnet)
     
     def _initialize(self):
         """Initialize using the original live_fast.py setup"""
@@ -334,7 +360,7 @@ class LiveFastVideoPredictor:
             fid = 0
             all_predictions = []  # Store all predictions for aggregation
             
-            print("[Run] Processing video with original live_fast pipeline...")
+            print("Processing video with live_fast pipeline...")
             
             # Process frames
             while vs.more():
@@ -343,7 +369,7 @@ class LiveFastVideoPredictor:
                     break
                     
                 fid += 1
-                kp, vis = self.hrnet_worker(frame, self.hrnet)
+                kp, vis = self._hrnet_worker_wrapper(frame, self.hrnet)
                 buf.append(kp)
                 
                 # Process when we have enough frames
@@ -362,18 +388,28 @@ class LiveFastVideoPredictor:
                     
                     # Get predictions
                     logits = self.fused_logits(bank).squeeze(0)
-                    top_ids = torch.topk(logits, 4).indices.tolist()
-                    top_words = [self.label2word.get(i, f"<{i}>") for i in top_ids]
-                    top_probs = torch.topk(torch.softmax(logits, 0), 4).values.tolist()
                     
-                    print(f"[{fid:06d}] Top-1 = {top_words[0]:<20} Top-4 = {top_words}")
+                    # Get ALL predictions by sorting all logits
+                    softmax_probs = torch.softmax(logits, 0)
+                    all_probs, all_ids = torch.sort(softmax_probs, descending=True)
                     
-                    # Store this prediction
+                    # Convert to lists for processing
+                    all_ids = all_ids.tolist()
+                    all_probs = all_probs.tolist()
+                    all_words = [self.label2word.get(i, f"<{i}>") for i in all_ids]
+                    
+                    # Show top 4 for display purposes
+                    top_4_words = all_words[:4]
+                    # Minimal logging - only show progress occasionally
+                    if fid % 10 == 0:  # Every 10th frame
+                        print(f"[Frame {fid}] Current: {top_4_words[0]}")
+                    
+                    # Store ALL predictions (not just top 4)
                     prediction = []
-                    for i, (word, prob) in enumerate(zip(top_words, top_probs)):
+                    for i, (word, prob) in enumerate(zip(all_words, all_probs)):
                         prediction.append({
                             "word": word,
-                            "confidence": round(prob, 3),
+                            "confidence": round(prob, 6),
                             "rank": i + 1
                         })
                     all_predictions.append(prediction)
@@ -390,10 +426,10 @@ class LiveFastVideoPredictor:
             else:
                 # If we reach here, video was too short
                 return [
-                    {"word": "Video too short", "confidence": 0.0, "rank": 1},
-                    {"word": "Need more frames", "confidence": 0.0, "rank": 2},
-                    {"word": "Try longer video", "confidence": 0.0, "rank": 3},
-                    {"word": "Or different sign", "confidence": 0.0, "rank": 4}
+                    {"word": "Video too short", "confidence": 0.000000, "rank": 1},
+                    {"word": "Need more frames", "confidence": 0.000000, "rank": 2},
+                    {"word": "Try longer video", "confidence": 0.000000, "rank": 3},
+                    {"word": "Or different sign", "confidence": 0.000000, "rank": 4}
                 ]
                 
         except Exception as e:
@@ -403,37 +439,32 @@ class LiveFastVideoPredictor:
 
     def _aggregate_predictions(self, all_predictions: List[List[Dict]]) -> List[Dict]:
         """
-        Aggregate predictions from multiple frames by averaging confidence scores
+        Show each frame batch prediction, then combine ALL predictions by summing confidence scores
+        Return top 4 words with highest total sums
         """
-        word_scores = {}
+        print(f"Combining {len(all_predictions)} frame batches...")
         
-        # Collect all confidence scores for each word
-        for frame_predictions in all_predictions:
-            for pred in frame_predictions:
+        # Combine ALL predictions by summing confidence scores
+        word_total_scores = {}
+        
+        for batch_idx, frame_predictions in enumerate(all_predictions):
+            for pred in frame_predictions:  # Consider ALL predictions, not just top 4
                 word = pred["word"]
                 confidence = pred["confidence"]
                 
-                if word not in word_scores:
-                    word_scores[word] = []
-                word_scores[word].append(confidence)
+                if word not in word_total_scores:
+                    word_total_scores[word] = 0.0
+                
+                word_total_scores[word] += confidence
         
-        # Calculate average confidence for each word
-        word_avg_scores = {}
-        for word, scores in word_scores.items():
-            # Use weighted average - more recent predictions have slightly higher weight
-            weights = [1.0 + (i * 0.1) for i in range(len(scores))]
-            weighted_sum = sum(score * weight for score, weight in zip(scores, weights))
-            total_weight = sum(weights)
-            word_avg_scores[word] = weighted_sum / total_weight
-        
-        # Sort by average confidence and return top 4
-        sorted_words = sorted(word_avg_scores.items(), key=lambda x: x[1], reverse=True)
+        # Final calculation - sort by total sum (not average)
+        sorted_words = sorted(word_total_scores.items(), key=lambda x: x[1], reverse=True)
         
         result = []
-        for i, (word, avg_confidence) in enumerate(sorted_words[:4]):
+        for i, (word, total_score) in enumerate(sorted_words[:4]):
             result.append({
                 "word": word,
-                "confidence": round(avg_confidence, 3),
+                "confidence": round(total_score, 6),  # Use total sum as confidence
                 "rank": i + 1
             })
         
@@ -441,11 +472,11 @@ class LiveFastVideoPredictor:
         while len(result) < 4:
             result.append({
                 "word": f"prediction_{len(result) + 1}",
-                "confidence": 0.1,
+                "confidence": 0.100000,
                 "rank": len(result) + 1
             })
         
-        print(f"[Aggregated] Combined {len(all_predictions)} frame predictions -> Top-4: {[p['word'] for p in result]}")
+        print(f"Final result: {[p['word'] for p in result]}")
         return result
 
 def get_pro_model():
@@ -485,10 +516,10 @@ def predict_video_with_model(video_path: str, model_type: str = "mini") -> List[
     except Exception as e:
         print(f"Error in video prediction: {e}")
         return [
-            {"word": "Error", "confidence": 0.0, "rank": 1},
-            {"word": "Failed", "confidence": 0.0, "rank": 2},
-            {"word": "Processing", "confidence": 0.0, "rank": 3},
-            {"word": "Video", "confidence": 0.0, "rank": 4}
+            {"word": "Error", "confidence": 0.000000, "rank": 1},
+            {"word": "Failed", "confidence": 0.000000, "rank": 2},
+            {"word": "Processing", "confidence": 0.000000, "rank": 3},
+            {"word": "Video", "confidence": 0.000000, "rank": 4}
         ]
 
 def predict_frame_with_model(frame: np.ndarray, model_type: str = "mini") -> List[Dict]:
@@ -512,7 +543,7 @@ def predict_frame_with_model(frame: np.ndarray, model_type: str = "mini") -> Lis
             
             predictions.append({
                 "word": word,
-                "confidence": round(confidence, 3),
+                "confidence": round(confidence, 6),
                 "rank": i + 1
             })
         
@@ -520,4 +551,4 @@ def predict_frame_with_model(frame: np.ndarray, model_type: str = "mini") -> Lis
         
     except Exception as e:
         print(f"Error in frame prediction: {e}")
-        return [{"word": "Error", "confidence": 0.0, "rank": 1}]
+        return [{"word": "Error", "confidence": 0.000000, "rank": 1}]
