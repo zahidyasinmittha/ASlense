@@ -289,14 +289,14 @@ class LiveFastVideoPredictor:
             
             # Load HRNet (same pattern as live_fast.py)
             cfg.defrost()
-            cfg.merge_from_file("wholebody_w48_384x288.yaml")
+            cfg.merge_from_file(str(models_dir / "wholebody_w48_384x288.yaml"))
             cfg.freeze()
             
             self.hrnet = get_pose_net(cfg, is_train=False).to(DEVICE).eval()
             self.hrnet.load_state_dict({
                 (k[9:] if k.startswith('backbone.') 
                  else k[14:] if k.startswith('keypoint_head.') else k): v 
-                for k, v in torch.load("hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth", 
+                for k, v in torch.load(str(models_dir / "hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth"), 
                                        map_location="cuda")['state_dict'].items()
             })
             

@@ -12,7 +12,9 @@ import importlib
 ### ★ 1 ────────────────────────────────────────────────────────────────
 # Label CSV → dictionary  (expects two columns: word,label)
 import csv
-LABEL_CSV = "label_map.csv"              # ← adjust path if needed
+import os
+_models_dir = os.path.dirname(os.path.abspath(__file__))
+LABEL_CSV = os.path.join(_models_dir, "label_map.csv")              # ← adjust path if needed
 label2word = {}
 with open(LABEL_CSV, newline='', encoding='utf-8') as f:
     for row in csv.DictReader(f):     # columns: word,label
@@ -95,8 +97,8 @@ def proc_skel(inp):
     return fp,bone
 
 # ───────── GCN ensemble (bone + joint) ─────────
-MODELS_CFG=[dict(weight=r"weights\bone weights\bone_wights-checkpoint-epoch245.pt",data="bone_data"),
-            dict(weight=r"weights\joint\joints_weights-checkpoint-epoch293.pt",data="joint_data")]
+MODELS_CFG=[dict(weight=os.path.join(_models_dir, r"weights\bone weights\bone_wights-checkpoint-epoch245.pt"),data="bone_data"),
+            dict(weight=os.path.join(_models_dir, r"weights\joint\joints_weights-checkpoint-epoch293.pt"),data="joint_data")]
 SOFT_W_T=torch.tensor([0.5,0.5],device=DEVICE).view(-1,1,1)
 def _load_gcn(p):
     Model=_import('model.decouple_gcn_attn.Model')

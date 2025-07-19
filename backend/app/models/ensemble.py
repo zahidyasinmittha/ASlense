@@ -95,14 +95,16 @@ def motion(d):
 
 
 # ─────────────── GCN ensemble ───────────────
+import os
 def _import(p):
     mod=__import__(p.split('.')[0])
     for s in p.split('.')[1:]: mod=getattr(mod,s)
     return mod
-MODELS_CFG=[dict(weight=r"./weights\bone weights\bone_wights-checkpoint-epoch245.pt",data="bone_data"),
-            dict(weight=r"./weights\joint\joints_weights-checkpoint-epoch293.pt",data="joint_data"),
-            dict(weight=r"./weights\bone motion weights\bone_motion_wights-checkpoint-epoch291.pt",data="bone_motion"),
-            dict(weight=r"./weights\joints_motion\joint_motion_wights-checkpoint-epoch267.pt",data="joint_motion")]
+_models_dir = os.path.dirname(os.path.abspath(__file__))
+MODELS_CFG=[dict(weight=os.path.join(_models_dir, r"weights\bone weights\bone_wights-checkpoint-epoch245.pt"),data="bone_data"),
+            dict(weight=os.path.join(_models_dir, r"weights\joint\joints_weights-checkpoint-epoch293.pt"),data="joint_data"),
+            dict(weight=os.path.join(_models_dir, r"weights\bone motion weights\bone_motion_wights-checkpoint-epoch291.pt"),data="bone_motion"),
+            dict(weight=os.path.join(_models_dir, r"weights\joints_motion\joint_motion_wights-checkpoint-epoch267.pt"),data="joint_motion")]
 SOFT_W_T=torch.tensor([0.30,0.40,0.10,0.20],device=DEVICE).view(-1,1,1)
 def _load_gcn(p):
     Model=_import('model.decouple_gcn_attn.Model')
