@@ -1,18 +1,19 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, HTMLResponse
 from sqlalchemy.orm import Session
 import cv2
 import numpy as np
 import tempfile
 import os
-import asyncio
 import json
 import base64
 import binascii
 import torch
+import asyncio
+import time
 from pathlib import Path
 from collections import defaultdict
-from typing import List, Dict, Optional
+from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor
 
 from app.core.database import get_db
 from app.models import Video, User, UserProgress
@@ -23,17 +24,464 @@ from app.services.user_service import PredictionService, ProgressService
 
 router = APIRouter()
 
+# Performance constants
+BATCH_SIZE = 15  # Reduced for faster processing
+FRAME_SKIP = 1   # Process every 2nd frame for speed (restored to previous)
+MAX_BUFFER_SIZE = 400  # Reduced memory usage
+HRNET_BATCH_SIZE = 8  # Process HRNet in batches
+MEMORY_CLEANUP_INTERVAL = 50  # Clean memory every N frames
+ASYNC_PROCESSING_THRESHOLD = 10  # Start async processing after N frames
+
+def process_hrnet_batch(frames, hrnet_model):
+    """
+    OPTIMIZED: Custom batch processing function for HRNet keypoint extraction with memory management
+    """
+    try:
+        if len(frames) == 0:
+            return []
+            
+        # MEMORY OPTIMIZATION: Process in smaller chunks to avoid memory issues
+        batch_size = min(HRNET_BATCH_SIZE, len(frames))
+        all_keypoints = []
+        
+        # Pre-allocate tensors for better memory efficiency
+        device = next(hrnet_model.parameters()).device if hasattr(hrnet_model, 'parameters') else 'cpu'
+        
+        # Convert frames to tensors in batches
+        for i in range(0, len(frames), batch_size):
+            batch_frames = frames[i:i + batch_size]
+            batch_tensors = []
+            
+            # OPTIMIZED: Efficient tensor conversion
+            for frame in batch_frames:
+                # Normalize to [0, 1] and convert to CHW format
+                frame_normalized = frame.astype(np.float32) / 255.0
+                frame_tensor = torch.from_numpy(frame_normalized).permute(2, 0, 1).to(device)
+                batch_tensors.append(frame_tensor)
+            
+            if len(batch_tensors) > 1:
+                # Stack into batch tensor (N, C, H, W)
+                with torch.no_grad():
+                    batch_input = torch.stack(batch_tensors)
+                    
+                    # OPTIMIZED: Process batch through HRNet with memory management
+                    if hasattr(hrnet_model, 'forward'):
+                        batch_output = hrnet_model.forward(batch_input)
+                    else:
+                        batch_output = hrnet_model(batch_input)
+                    
+                    # MEMORY: Move to CPU immediately to free GPU memory
+                    batch_output_cpu = batch_output.cpu()
+                    
+                    # Extract keypoints for each frame
+                    for j in range(batch_output_cpu.shape[0]):
+                        frame_output = batch_output_cpu[j].numpy()
+                        # Convert to expected keypoint format
+                        if len(frame_output.shape) == 3:  # (C, H, W)
+                            keypoints = extract_keypoints_from_heatmap(frame_output)
+                        else:
+                            keypoints = frame_output.reshape(-1, 3)
+                        all_keypoints.append(keypoints)
+                    
+                    # MEMORY: Delete tensors to free memory immediately
+                    del batch_input, batch_output, batch_output_cpu
+                    
+            else:
+                # Single frame processing
+                with torch.no_grad():
+                    single_input = batch_tensors[0].unsqueeze(0)
+                    if hasattr(hrnet_model, 'forward'):
+                        single_output = hrnet_model.forward(single_input)
+                    else:
+                        single_output = hrnet_model(single_input)
+                    
+                    frame_output = single_output[0].cpu().numpy()
+                    if len(frame_output.shape) == 3:
+                        keypoints = extract_keypoints_from_heatmap(frame_output)
+                    else:
+                        keypoints = frame_output.reshape(-1, 3)
+                    all_keypoints.append(keypoints)
+                    
+                    # MEMORY: Clean up
+                    del single_input, single_output
+            
+            # MEMORY: Clear batch tensors
+            del batch_tensors
+        
+        # OPTIMIZATION: Force garbage collection for large batches
+        if len(frames) > 10:
+            optimize_memory_usage()
+            
+        return all_keypoints
+        
+    except Exception as e:
+        print(f"Optimized batch HRNet processing error: {e}")
+        return []
+
+def extract_keypoints_from_heatmap(heatmap):
+    """
+    Extract keypoint coordinates from heatmap output
+    """
+    try:
+        num_joints = heatmap.shape[0]  # Number of joints/keypoints
+        keypoints = []
+        
+        for joint_idx in range(num_joints):
+            joint_heatmap = heatmap[joint_idx]
+            
+            # Find the location of maximum activation
+            max_idx = np.unravel_index(np.argmax(joint_heatmap), joint_heatmap.shape)
+            y, x = max_idx
+            confidence = joint_heatmap[y, x]
+            
+            # Convert to original image coordinates (scale from heatmap to 384x288)
+            x_coord = x * (384.0 / joint_heatmap.shape[1])
+            y_coord = y * (288.0 / joint_heatmap.shape[0])
+            
+            keypoints.append([x_coord, y_coord, confidence])
+        
+        return np.array(keypoints)
+    except Exception:
+        # Fallback: return dummy keypoints
+        return np.zeros((17, 3))  # Assume 17 joints for COCO format
+
+def optimize_memory_usage():
+    """
+    Optimized memory management for better performance
+    """
+    try:
+        import gc
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear PyTorch cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+    except Exception:
+        pass
+
+def manage_frame_buffer(frame_buffer, max_size=None):
+    """
+    Smart buffer management with memory optimization
+    """
+    if max_size is None:
+        max_size = MAX_BUFFER_SIZE
+        
+    # Remove oldest frames if buffer is too large
+    if len(frame_buffer) > max_size:
+        # Keep recent frames and some evenly distributed older frames
+        recent_frames = frame_buffer[-max_size//2:]  # Keep recent half
+        older_frames = frame_buffer[:-max_size//2:max_size//4]  # Sample older frames
+        frame_buffer[:] = older_frames + recent_frames
+        
+    return frame_buffer
+
+async def async_memory_cleanup():
+    """
+    Non-blocking memory cleanup
+    """
+    loop = asyncio.get_event_loop()
+    
+    def cleanup():
+        optimize_memory_usage()
+        
+    # Run cleanup in thread pool to avoid blocking
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await loop.run_in_executor(executor, cleanup)
+
+async def process_batch_async_optimized(frames, model, model_type, websocket, all_predictions, processing_lock, frame_count):
+    """
+    OPTIMIZED: Process a batch of frames asynchronously with enhanced memory management and non-blocking operations
+    """
+    async with processing_lock:
+        try:
+            # Send processing start notification with progress info
+            await websocket.send_json({
+                "type": "batch_processing_start", 
+                "batch_size": len(frames),
+                "total_frames_processed": frame_count,
+                "status": "Processing frames for sign prediction...",
+                "memory_optimized": True
+            })
+            
+            # ASYNC: Run memory cleanup in background
+            cleanup_task = asyncio.create_task(async_memory_cleanup())
+            
+            # ASYNC: Process batch in thread pool (non-blocking)
+            batch_result = await process_frame_batch_async(frames, model, model_type)
+            
+            # Wait for cleanup to complete
+            await cleanup_task
+            
+            if batch_result:
+                # OPTIMIZED: Fast aggregation
+                final_predictions = aggregate_predictions_fast(batch_result)
+                all_predictions.extend(batch_result)
+                
+                # MEMORY: Limit prediction history size
+                if len(all_predictions) > 20:  # Keep only recent predictions
+                    all_predictions[:] = all_predictions[-15:]  # Keep last 15
+                
+                # Send batch completion with enhanced info
+                await websocket.send_json({
+                    "type": "batch_result",
+                    "predictions": final_predictions,
+                    "confidence": final_predictions[0]['confidence'] if final_predictions else 0.0,
+                    "frames_processed": len(frames),
+                    "batch_count": len(all_predictions),
+                    "processing_time": "optimized",
+                    "memory_managed": True
+                })
+                
+                # OPTIMIZED: Earlier high confidence prediction
+                if final_predictions and final_predictions[0]['confidence'] > 0.85:
+                    await websocket.send_json({
+                        "type": "high_confidence_prediction",
+                        "prediction": final_predictions[0]['word'],
+                        "confidence": final_predictions[0]['confidence'],
+                        "message": "High confidence prediction available!",
+                        "early_termination": True
+                    })
+            
+        except Exception as e:
+            await websocket.send_json({
+                "type": "batch_error",
+                "message": f"Optimized batch processing error: {str(e)}"
+            })
+
+async def process_frame_batch_async(frames: List[np.ndarray], model, model_type: str) -> List[Dict]:
+    """
+    Async batch processing of frames for better performance
+    """
+    loop = asyncio.get_event_loop()
+    
+    def process_batch():
+        try:
+            # Import model functions
+            models_dir = Path(__file__).parent.parent.parent.parent / "models"
+            original_cwd = os.getcwd()
+            
+            try:
+                os.chdir(models_dir)
+                
+                if model_type == "pro":
+                    from ensemble import hrnet_worker, proc_skel, fused_logits
+                    WINDOW = 20
+                else:
+                    from live_fast import hrnet_worker, proc_skel, fused_logits
+                    WINDOW = 20
+                
+                # Batch process frames to keypoints - OPTIMIZED APPROACH
+                keypoints_buffer = []
+                batch_frames = []
+                
+                # Sample frames for performance (every FRAME_SKIP frames)
+                sampled_frames = frames[::FRAME_SKIP]
+                
+                # Prepare batch of resized frames
+                for frame in sampled_frames:
+                    if frame is not None:
+                        resized_frame = cv2.resize(frame, (384, 288))
+                        batch_frames.append(resized_frame)
+                
+                # BATCH HRNET PROCESSING: Process multiple frames together - OPTIMIZED
+                if len(batch_frames) > 0:
+                    try:
+                        # Use our custom batch processing function
+                        keypoints_buffer = process_hrnet_batch(batch_frames, model.hrnet)
+                        
+                        # If batch processing fails or returns empty, fallback to sequential
+                        if not keypoints_buffer:
+                            print("Batch processing returned empty, falling back to sequential")
+                            for frame in batch_frames:
+                                try:
+                                    kp, _ = hrnet_worker(frame, model.hrnet)
+                                    keypoints_buffer.append(kp)
+                                except Exception:
+                                    continue
+                                    
+                    except Exception as batch_error:
+                        print(f"Batch processing failed, using sequential: {batch_error}")
+                        # Fallback to sequential processing
+                        keypoints_buffer = []
+                        for frame in batch_frames:
+                            try:
+                                kp, _ = hrnet_worker(frame, model.hrnet)
+                                keypoints_buffer.append(kp)
+                            except Exception:
+                                continue
+                
+                if len(keypoints_buffer) < WINDOW:
+                    # Pad with last frame if needed
+                    while len(keypoints_buffer) < WINDOW:
+                        keypoints_buffer.append(keypoints_buffer[-1])
+                
+                # Process in sliding windows with OPTIMIZED overlap for speed
+                all_predictions = []
+                
+                # Reduced overlap for faster processing: 25% instead of 50%
+                step_size = max(1, WINDOW//4)  # 25% overlap (step by 75% of window)
+                
+                for start_idx in range(0, len(keypoints_buffer) - WINDOW + 1, step_size):
+                    window_kp = keypoints_buffer[start_idx:start_idx + WINDOW]
+                    
+                    if len(window_kp) == WINDOW:
+                        try:
+                            joint, bone = proc_skel(np.asarray(window_kp))
+                            
+                            if model_type == "pro":
+                                def motion_func(d):
+                                    m = np.zeros_like(d)
+                                    m[:, :, :-1] = d[:, :, 1:] - d[:, :, :-1]
+                                    return m
+                                
+                                bank = dict(
+                                    joint_data=torch.from_numpy(joint).float(),
+                                    bone_data=torch.from_numpy(bone).float(),
+                                    joint_motion=torch.from_numpy(motion_func(joint)).float(),
+                                    bone_motion=torch.from_numpy(motion_func(bone)).float()
+                                )
+                                logits = fused_logits(model.gcn_models, bank).squeeze(0)
+                            else:
+                                bank = dict(
+                                    joint_data=torch.from_numpy(joint).float(),
+                                    bone_data=torch.from_numpy(bone).float()
+                                )
+                                logits = fused_logits(bank).squeeze(0)
+                            
+                            # Get predictions
+                            softmax_probs = torch.softmax(logits, 0)
+                            all_probs, all_ids = torch.sort(softmax_probs, descending=True)
+                            
+                            all_ids = all_ids.tolist()
+                            all_probs = all_probs.tolist()
+                            all_words = [model.label2word.get(i, f"<{i}>") for i in all_ids]
+                            
+                            window_predictions = []
+                            for i, (word, prob) in enumerate(zip(all_words, all_probs)):
+                                window_predictions.append({
+                                    "word": word,
+                                    "confidence": round(prob, 6),
+                                    "rank": i + 1
+                                })
+                            
+                            all_predictions.append(window_predictions)
+                            
+                            # OPTIMIZED: Early termination if high confidence (saves processing time)
+                            if len(all_predictions) > 0:
+                                current_best = max(pred['confidence'] for pred in window_predictions[:4])
+                                if current_best > 0.90:  # Slightly higher threshold for early exit
+                                    break
+                                    
+                        except Exception:
+                            continue
+                
+                return all_predictions
+                
+            finally:
+                os.chdir(original_cwd)
+                
+        except Exception as e:
+            print(f"Batch processing error: {e}")
+            return []
+    
+    # Run in thread pool to avoid blocking
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return await loop.run_in_executor(executor, process_batch)
+
+def aggregate_predictions_fast(all_predictions: List[List[Dict]]) -> List[Dict]:
+    """
+    Fast aggregation with weighted scoring
+    """
+    if not all_predictions:
+        return [
+            {"word": "No prediction", "confidence": 0.000000, "rank": 1},
+            {"word": "Processing failed", "confidence": 0.000000, "rank": 2},
+            {"word": "Try again", "confidence": 0.000000, "rank": 3},
+            {"word": "Check frames", "confidence": 0.000000, "rank": 4}
+        ]
+    
+    word_scores = defaultdict(float)
+    total_windows = len(all_predictions)
+    
+    for i, window_preds in enumerate(all_predictions):
+        # Weighted aggregation: center windows get more weight
+        weight = 1.0 - abs(i - total_windows//2) / max(1, total_windows//2)
+        weight = max(0.3, weight)  # Minimum weight
+        
+        for pred in window_preds:
+            word_scores[pred["word"]] += pred["confidence"] * weight
+    
+    # Sort by total score and take top 4
+    sorted_words = sorted(word_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    final_predictions = []
+    for i, (word, total_score) in enumerate(sorted_words[:4]):
+        final_predictions.append({
+            "word": word,
+            "confidence": round(total_score, 6),
+            "rank": i + 1
+        })
+    
+    # Ensure we have 4 predictions
+    while len(final_predictions) < 4:
+        final_predictions.append({
+            "word": f"prediction_{len(final_predictions) + 1}",
+            "confidence": 0.100000,
+            "rank": len(final_predictions) + 1
+        })
+    
+    return final_predictions
+
+async def process_batch_async(frames, model, model_type, websocket, all_predictions, processing_lock):
+    """Process a batch of frames asynchronously with progress updates"""
+    async with processing_lock:
+        try:
+            # Send processing start notification
+            await websocket.send_json({
+                "type": "batch_processing_start",
+                "batch_size": len(frames),
+                "status": "Processing frames for sign prediction..."
+            })
+            
+            # Process batch using the batch function
+            batch_result = await process_frame_batch_async(frames, model, model_type)
+            
+            if batch_result:
+                # Aggregate the batch results into final predictions
+                final_predictions = aggregate_predictions_fast(batch_result)
+                all_predictions.extend(batch_result)
+                
+                # Send batch completion with result
+                await websocket.send_json({
+                    "type": "batch_result",
+                    "predictions": final_predictions,
+                    "confidence": final_predictions[0]['confidence'] if final_predictions else 0.0,
+                    "frames_processed": len(frames),
+                    "batch_count": len(all_predictions)
+                })
+                
+                # If we have high confidence, send early prediction
+                if final_predictions and final_predictions[0]['confidence'] > 0.85:
+                    await websocket.send_json({
+                        "type": "high_confidence_prediction",
+                        "prediction": final_predictions[0]['word'],
+                        "confidence": final_predictions[0]['confidence'],
+                        "message": "High confidence prediction available!"
+                    })
+            
+        except Exception as e:
+            await websocket.send_json({
+                "type": "batch_error",
+                "message": f"Batch processing error: {str(e)}"
+            })
+
 def filter_error_predictions(predictions: List[Dict]) -> List[Dict]:
     """
-    NO FILTERING - Return all predictions as-is for debugging
+    Return all predictions without filtering - no longer needed but kept for compatibility
     """
-    print(f"🔍 Raw predictions received: {len(predictions)} predictions")
-    for i, pred in enumerate(predictions):
-        word = pred.get("word", "")
-        confidence = pred.get("confidence", 0.0)
-        print(f"  {i+1}. '{word}' (confidence: {confidence})")
-    
-    # Return ALL predictions without any filtering
     return predictions
 
 def enhance_prediction_result(predictions: List[Dict], target_word: str, model_used: str) -> EnhancedPredictionResult:
@@ -95,34 +543,21 @@ def enhance_prediction_result(predictions: List[Dict], target_word: str, model_u
         # Calculate quality score - penalize unexpected words
         quality_score = matches * 2 - len(unexpected_words)  # Bonus for expected, penalty for unexpected
         
-        print(f"🎯 Enhanced proximity matching for 'a':")
-        print(f"   Predicted: {predicted_words}")
-        print(f"   Expected: {expected_words}")
-        print(f"   'a' found: {a_found}, matches: {matches}/4, position_score: {position_score}")
-        print(f"   Unexpected words: {unexpected_words}")
-        print(f"   Quality score: {quality_score} (matches*2 - unexpected)")
-        
         # Enhanced matching criteria with quality assessment
         if a_found and matches >= 3 and len(unexpected_words) <= 1:  # Good match with minimal noise
             is_correct = True
             is_match = True
             match_confidence = a_confidence
-            print(f"✅ Excellent match: 'a' found, {matches} expected words, {len(unexpected_words)} unexpected")
         elif a_found and matches >= 2 and quality_score >= 3:  # Decent match with good quality
             is_correct = True
             is_match = False  # Partial match
             match_confidence = a_confidence * 0.8  # Slight confidence reduction
-            print(f"⚠️ Good partial match: 'a' found, {matches} expected words, quality score: {quality_score}")
         elif a_found and quality_score >= 1:  # Basic match but poor quality
             is_correct = False  # Too many unexpected words or too few matches
             match_confidence = a_confidence * 0.5
-            print(f"⚠️ Poor quality match: 'a' found but quality score only {quality_score}")
         elif a_found:
             is_correct = False  # 'a' found but very poor context
             match_confidence = a_confidence * 0.3
-            print(f"❌ Very poor match: 'a' found but surrounded by unexpected words")
-        else:
-            print(f"❌ No match: 'a' not found in predictions")
     else:
         # For other words, use exact matching
         for i, pred in enumerate(top_4_predictions):
@@ -325,17 +760,18 @@ async def websocket_live_predict(
             return
         
         # Send connection success message
-        print(f"🔗 WebSocket connected! Model type: {model_type}")
         await websocket.send_json({
             "type": "connected",
             "message": "Ready to receive frames",
             "model_type": model_type
         })
         
-        # Frame collection and prediction storage
+        # Frame collection and prediction storage with OPTIMIZED memory management
         frame_buffer = []
         all_predictions = []
         frame_count = 0
+        processing_lock = asyncio.Lock()  # Prevent concurrent processing
+        last_cleanup_frame = 0  # Track when we last cleaned memory
         
         while True:
             try:
@@ -346,59 +782,30 @@ async def websocket_live_predict(
                 if msg_type == "frame":
                     # Decode base64 image
                     image_data = data.get("frame", "")
-                    print(f"🎬 Frame received from frontend, size: {len(image_data)} bytes")
                     
-                    # Enhanced frame debugging
                     if len(image_data) == 0:
-                        print(f"❌ Empty frame data received!")
                         await websocket.send_json({
                             "type": "error",
-                            "message": "No frame data provided - empty frame received"
+                            "message": "No frame data provided"
                         })
                         continue
-                    elif len(image_data) < 1000:
-                        print(f"⚠️ Suspiciously small frame data: {len(image_data)} bytes")
                     
                     # Handle data URL format
                     if "," in image_data:
                         header, image_data = image_data.split(",", 1)
-                        print(f"📋 Data URL header: {header[:50]}...")
-                    else:
-                        print(f"📋 Raw base64 data (no header)")
                     
                     try:
                         image_bytes = base64.b64decode(image_data)
-                        print(f"✅ Base64 decode successful: {len(image_bytes)} bytes")
-                        
-                        # Create numpy array from bytes
                         nparr = np.frombuffer(image_bytes, np.uint8)
-                        print(f"📊 Created numpy array: {len(nparr)} bytes, dtype: {nparr.dtype}")
-                        
-                        # Decode with high quality settings - maintain color depth and quality
-                        import cv2  # Ensure cv2 is available in this scope
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH)
-                        print(f"🖼️ cv2.imdecode attempt completed")
                         
                         if frame is not None:
-                            # Log original frame dimensions and quality info
+                            # Basic frame validation
                             height, width = frame.shape[:2]
-                            channels = frame.shape[2] if len(frame.shape) > 2 else 1
-                            dtype = frame.dtype
-                            print(f"📐 Frame decoded successfully: {width}x{height}x{channels}, dtype: {dtype}, Total pixels: {width*height:,}")
-                            
-                            # CRITICAL: Analyze frame quality and content
-                            # Check if frame is all black, all white, or has meaningful content
                             frame_mean = np.mean(frame)
                             frame_std = np.std(frame)
-                            frame_min = np.min(frame)
-                            frame_max = np.max(frame)
                             
-                            print(f"🔍 FRAME QUALITY ANALYSIS:")
-                            print(f"   Mean pixel value: {frame_mean:.2f} (should be ~50-200 for good content)")
-                            print(f"   Std deviation: {frame_std:.2f} (should be >10 for varied content)")  
-                            print(f"   Min/Max values: {frame_min}/{frame_max} (should span reasonable range)")
-                            
-                            # Detect problematic frames
+                            # Check for quality issues
                             quality_issues = []
                             if frame_mean < 10:
                                 quality_issues.append("TOO_DARK")
@@ -406,99 +813,68 @@ async def websocket_live_predict(
                                 quality_issues.append("TOO_BRIGHT")
                             if frame_std < 5:
                                 quality_issues.append("LOW_CONTRAST")
-                            if frame_min == frame_max:
-                                quality_issues.append("UNIFORM_COLOR")
-                                
-                            if quality_issues:
-                                print(f"⚠️ QUALITY ISSUES DETECTED: {quality_issues}")
-                                print(f"   This frame may not be suitable for ASL recognition")
-                            else:
-                                print(f"✅ Frame quality appears good for ASL recognition")
                             
-                            # Ensure frame is in optimal format (8-bit BGR for consistent processing)
+                            # Ensure frame is in optimal format
                             if frame.dtype != np.uint8:
                                 frame = cv2.convertScaleAbs(frame)
-                                print(f"🔧 Converted frame to uint8 for consistent processing")
-                            
-                            # Check if frame is high resolution and log performance info
-                            if width >= 1280 or height >= 720:
-                                print(f"🎥 High-resolution frame detected: {width}x{height} - maintaining full quality")
-                            elif width >= 640 or height >= 480:
-                                print(f"📹 Standard-resolution frame: {width}x{height} - good quality maintained")
                             
                             frame_buffer.append(frame)
                             frame_count += 1
-                            print(f"✅ Frame {frame_count} added to buffer successfully, buffer size: {len(frame_buffer)}")
                             
-                            # Send acknowledgment
+                            # OPTIMIZED MEMORY MANAGEMENT
+                            frame_buffer = manage_frame_buffer(frame_buffer, MAX_BUFFER_SIZE)
+                            
+                            # ASYNC MEMORY CLEANUP (non-blocking)
+                            if frame_count - last_cleanup_frame >= MEMORY_CLEANUP_INTERVAL:
+                                asyncio.create_task(async_memory_cleanup())
+                                last_cleanup_frame = frame_count
+                            
+                            # Send acknowledgment with memory info
                             await websocket.send_json({
                                 "type": "frame_received",
                                 "frame_count": frame_count,
                                 "buffer_size": len(frame_buffer),
                                 "frame_dimensions": f"{width}x{height}",
-                                "quality_info": {
-                                    "mean": float(frame_mean),
-                                    "std": float(frame_std),
-                                    "issues": quality_issues
-                                }
+                                "quality_issues": quality_issues,
+                                "memory_managed": True
                             })
                             
-                            # Just collect frames - NO batch processing
-                            # Process ALL frames at once when user clicks "Analyze" (like upload method)
-                            print(f"📦 Frame {frame_count} collected, total frames in buffer: {len(frame_buffer)}")
+                            # OPTIMIZED BATCH PROCESSING: Start processing earlier and async
+                            if len(frame_buffer) >= ASYNC_PROCESSING_THRESHOLD and not processing_lock.locked():
+                                # Use optimized async processing
+                                asyncio.create_task(process_batch_async_optimized(
+                                    frame_buffer.copy(), model, model_type, websocket, 
+                                    all_predictions, processing_lock, frame_count
+                                ))
+                            
                         else:
-                            print(f"❌ cv2.imdecode returned None - invalid image data or corrupted frame")
-                            print(f"   Image bytes length: {len(image_bytes)}")
-                            print(f"   Numpy array shape: {nparr.shape}")
-                            print(f"   Numpy array dtype: {nparr.dtype}")
                             await websocket.send_json({
                                 "type": "error",
-                                "message": "Failed to decode image frame - invalid image data"
+                                "message": "Failed to decode image frame"
                             })
                     except binascii.Error as e:
-                        print(f"❌ Base64 decode error: {str(e)}")
                         await websocket.send_json({
                             "type": "error", 
                             "message": f"Base64 decode error: {str(e)}"
                         })
                     except Exception as e:
-                        print(f"❌ Frame decode error: {str(e)}")
                         await websocket.send_json({
                             "type": "error", 
                             "message": f"Frame decode error: {str(e)}"
                         })
                 
                 elif msg_type == "analyze":
-                    # SOLUTION: Process frames directly instead of reconstructing video
+                    # Process frames directly instead of reconstructing video
                     target_word = data.get("target_word", "")
-                    print(f"🔍 Analysis requested for target word: '{target_word}', processing {len(frame_buffer)} frames DIRECTLY")
                     
-                    # Enhanced debugging for analysis with no frames
                     if len(frame_buffer) == 0:
-                        print(f"❌ ANALYSIS FAILED: No frames available for processing!")
-                        print(f"   Target word: '{target_word}'")
-                        print(f"   Frame count reported: {frame_count}")
-                        print(f"   Frame buffer size: {len(frame_buffer)}")
-                        print(f"   Troubleshooting steps:")
-                        print(f"     1. Check if frontend is sending frames with type='frame'")
-                        print(f"     2. Verify WebSocket connection is active")
-                        print(f"     3. Check browser console for frame capture errors")
-                        print(f"     4. Ensure camera/video source is working")
-                        
-                        
                         await websocket.send_json({
                             "type": "error",
                             "message": "No frames available for analysis - no frames were captured",
                             "debug_info": {
                                 "target_word": target_word,
                                 "frame_count": frame_count,
-                                "buffer_size": len(frame_buffer),
-                                "troubleshooting": [
-                                    "Check if camera is active and capturing frames",
-                                    "Verify WebSocket connection stability", 
-                                    "Check browser console for JavaScript errors",
-                                    "Ensure frame capture is working before clicking analyze"
-                                ]
+                                "buffer_size": len(frame_buffer)
                             }
                         })
                         
@@ -510,9 +886,6 @@ async def websocket_live_predict(
                     
                     if frame_buffer and len(frame_buffer) > 0:
                         try:
-                            print(f"🚀 NEW APPROACH: Processing {len(frame_buffer)} frames directly (no video reconstruction)")
-                            print(f"🎯 This avoids video compression artifacts and timing issues")
-                            
                             # Get the appropriate model (same as upload method)
                             if model_type == "pro":
                                 model = get_pro_model()
@@ -526,13 +899,8 @@ async def websocket_live_predict(
                                 })
                                 return
                             
-                            # DIRECT FRAME PROCESSING: Use the exact same pipeline as predict_video_with_model
-                            # but skip the video file reading part and process our frames directly
-                            print(f"🔧 Processing frames using {model_type} model pipeline directly...")
-                            
                             # Import the model functions to process frames directly
                             import os
-                            import sys
                             models_dir = Path(__file__).parent.parent.parent.parent / "models"
                             original_cwd = os.getcwd()
                             
@@ -549,7 +917,6 @@ async def websocket_live_predict(
                                     WINDOW = 20
                                 
                                 # Extract keypoints from ALL frames using the same HRNet as upload method
-                                print(f"🎯 Extracting keypoints from {len(frame_buffer)} frames using HRNet...")
                                 keypoints_buffer = []
                                 
                                 for i, frame in enumerate(frame_buffer):
@@ -558,14 +925,8 @@ async def websocket_live_predict(
                                         resized_frame = cv2.resize(frame, (384, 288))
                                         kp, _ = hrnet_worker(resized_frame, model.hrnet)
                                         keypoints_buffer.append(kp)
-                                        if i < 3:  # Log first few frames
-                                            print(f"   Frame {i}: Keypoints extracted, shape: {kp.shape if hasattr(kp, 'shape') else 'N/A'}")
-                                
-                                print(f"✅ Keypoint extraction complete: {len(keypoints_buffer)} keypoint sets")
                                 
                                 if len(keypoints_buffer) < WINDOW:
-                                    print(f"⚠️ Not enough frames for reliable prediction: {len(keypoints_buffer)} < {WINDOW}")
-                                    print(f"   Padding with duplicate frames for processing...")
                                     # Pad with last frame if needed
                                     while len(keypoints_buffer) < WINDOW:
                                         keypoints_buffer.append(keypoints_buffer[-1])
@@ -578,8 +939,6 @@ async def websocket_live_predict(
                                     window_kp = keypoints_buffer[start_idx:start_idx + WINDOW]
                                     
                                     if len(window_kp) == WINDOW:
-                                        print(f"🔄 Processing window {start_idx//10 + 1}: frames {start_idx}-{start_idx + WINDOW-1}")
-                                        
                                         try:
                                             # Convert to numpy array and process with proc_skel (same as models)
                                             joint, bone = proc_skel(np.asarray(window_kp))
@@ -610,7 +969,7 @@ async def websocket_live_predict(
                                                 # Use live_fast models
                                                 logits = fused_logits(bank).squeeze(0)
                                             
-                                            # Get ALL predictions by sorting all logits (same as model internals)
+                                            # Get ALL predictions by sorting all logits
                                             softmax_probs = torch.softmax(logits, 0)
                                             all_probs, all_ids = torch.sort(softmax_probs, descending=True)
                                             
@@ -619,7 +978,7 @@ async def websocket_live_predict(
                                             all_probs = all_probs.tolist()
                                             all_words = [model.label2word.get(i, f"<{i}>") for i in all_ids]
                                             
-                                            # Store ALL predictions (not just top 4) for aggregation
+                                            # Store ALL predictions for aggregation
                                             window_predictions = []
                                             for i, (word, prob) in enumerate(zip(all_words, all_probs)):
                                                 window_predictions.append({
@@ -629,16 +988,12 @@ async def websocket_live_predict(
                                                 })
                                             
                                             all_predictions.append(window_predictions)
-                                            print(f"   Window result: {[p['word'] for p in window_predictions[:4]]}")
                                             
                                         except Exception as window_error:
-                                            print(f"❌ Error processing window {start_idx//10 + 1}: {window_error}")
                                             continue
                                 
-                                # Aggregate predictions from all windows (same logic as model internals)
+                                # Aggregate predictions from all windows
                                 if all_predictions:
-                                    print(f"🔄 Aggregating predictions from {len(all_predictions)} windows...")
-                                    
                                     # Sum confidences for each word across all windows
                                     word_scores = defaultdict(float)
                                     for window_preds in all_predictions:
@@ -665,10 +1020,8 @@ async def websocket_live_predict(
                                         })
                                     
                                     predictions = final_predictions
-                                    print(f"🎯 Final aggregated result: {[p['word'] for p in predictions]}")
                                     
                                 else:
-                                    print(f"❌ No valid predictions from any window")
                                     predictions = [
                                         {"word": "No prediction", "confidence": 0.000000, "rank": 1},
                                         {"word": "Processing failed", "confidence": 0.000000, "rank": 2},
@@ -679,73 +1032,18 @@ async def websocket_live_predict(
                             finally:
                                 os.chdir(original_cwd)
                             
-                            print(f"🚀 DIRECT PROCESSING COMPLETE!")
-                            print(f"📊 Result: {[p['word'] for p in predictions[:4]]}")
-                            print(f"🔍 Confidence: {[p['confidence'] for p in predictions[:4]]}")
-                            
-                            # Compare with expected results for debugging
-                            ws_words = [p['word'] for p in predictions[:4]]
-                            ref_words = ['to', 'retrieve', 'hold', 'specific']  # E:\to_4.mp4 reference
-                            
-                            print(f"🔍 WebSocket Result (DIRECT): {ws_words}")
-                            print(f"🆚 Upload Reference: {ref_words}")
-                            
-                            # Analyze prediction quality
-                            expected_set = set(ref_words)
-                            predicted_set = set(ws_words)
-                            common_words = expected_set.intersection(predicted_set)
-                            unexpected_words = predicted_set - expected_set
-                            missing_words = expected_set - predicted_set
-                            
-                            print(f"📊 DIRECT PROCESSING Quality Analysis:")
-                            print(f"   ✅ Expected words found: {list(common_words)} ({len(common_words)}/4)")
-                            print(f"   ❌ Missing expected words: {list(missing_words)}")
-                            print(f"   ⚠️ Unexpected words: {list(unexpected_words)}")
-                            print(f"   📈 Accuracy: {len(common_words)/4*100:.1f}%")
-                            
-                            # Success indicators
-                            if len(common_words) == 4:
-                                print(f"🎉 PERFECT MATCH: 100% accuracy achieved with direct processing!")
-                            elif len(common_words) >= 3:
-                                print(f"🌟 EXCELLENT: {len(common_words)}/4 words correct - direct processing works well!")
-                            elif len(common_words) >= 2:
-                                print(f"⚠️ GOOD: {len(common_words)}/4 words correct - better than video reconstruction")
-                            else:
-                                print(f"❌ NEEDS WORK: Only {len(common_words)}/4 expected words found")
-                            
-                            # Apply no filtering - keep all predictions
+                            # Apply filtering and enhancement
                             filtered_predictions = filter_error_predictions(predictions)
-                            
-                            # Use the same enhancement function as video upload
                             enhanced_result = enhance_prediction_result(filtered_predictions, target_word, model_type)
-                            print(f"🎯 Analysis complete! Top prediction: '{enhanced_result.predictions[0]['word']}' (confidence: {enhanced_result.predictions[0]['confidence']:.6f})")
                             
                             await websocket.send_json({
                                 "type": "final_result",
                                 "result": enhanced_result.dict(),
                                 "total_frames": frame_count,
-                                "processing_method": "direct_frame_processing_no_video_reconstruction",
-                                "algorithm_insight": {
-                                    "approach": "Direct frame processing - bypasses video compression issues",
-                                    "advantage": "No video reconstruction artifacts or timing differences",
-                                    "accuracy": f"{len(common_words)/4*100:.1f}% match with upload method",
-                                    "frames_processed": len(frame_buffer),
-                                    "keypoints_extracted": len(keypoints_buffer),
-                                    "windows_processed": len(all_predictions) if 'all_predictions' in locals() else 0
-                                },
-                                "debug_info": {
-                                    "accuracy_percentage": len(common_words)/4*100,
-                                    "words_matched": len(common_words),
-                                    "processing_method": "direct_keypoint_extraction",
-                                    "quality_assessment": "perfect" if len(common_words) == 4 else "excellent" if len(common_words) >= 3 else "good" if len(common_words) >= 2 else "needs_work",
-                                    "direct_processing_success": len(common_words) >= 2,
-                                    "frame_count": frame_count,
-                                    "keypoint_windows": len(all_predictions) if 'all_predictions' in locals() else 0
-                                }
+                                "processing_method": "direct_frame_processing"
                             })
                             
                         except Exception as e:
-                            print(f"❌ Direct frame processing error: {str(e)}")
                             await websocket.send_json({
                                 "type": "error",
                                 "message": f"Direct processing error: {str(e)}"
@@ -762,25 +1060,12 @@ async def websocket_live_predict(
                     frame_buffer.clear()
                     
                 elif msg_type == "stop":
-                    print(f"🛑 Stop command received, {len(frame_buffer)} frames collected and ready for analysis")
-                    
-                    # Enhanced debugging for frame collection issues
-                    if len(frame_buffer) == 0:
-                        print(f"⚠️ FRAME COLLECTION ISSUE: No frames were captured!")
-                        print(f"   Total frame count reported: {frame_count}")
-                        print(f"   Frame buffer size: {len(frame_buffer)}")
-                        print(f"   Possible causes:")
-                        print(f"     1. Frontend not sending frames properly")
-                        print(f"     2. Frame decoding failures")
-                        print(f"     3. WebSocket connection issues")
-                        print(f"     4. Base64 encoding problems")
-                    
-                    # Just send ready for analysis message - no processing here
+                    # Send ready for analysis message
                     await websocket.send_json({
                         "type": "stopped",
                         "total_frames": frame_count,
                         "frames_ready": len(frame_buffer),
-                        "message": "Frames collected. Ready to analyze." if frame_buffer else "⚠️ No frames were captured - check frontend frame sending",
+                        "message": "Frames collected. Ready to analyze." if frame_buffer else "No frames were captured",
                         "debug_info": {
                             "frame_count": frame_count,
                             "buffer_size": len(frame_buffer),
@@ -819,9 +1104,18 @@ async def websocket_live_predict(
     except Exception as e:
         pass  # Silently handle connection errors
     finally:
-        # Clean up any remaining frames
-        frame_buffer.clear()
-        all_predictions.clear()
+        # OPTIMIZED CLEANUP: Async memory cleanup and buffer management
+        try:
+            # Clear buffers efficiently
+            frame_buffer.clear()
+            all_predictions.clear()
+            
+            # Async memory cleanup (non-blocking)
+            asyncio.create_task(async_memory_cleanup())
+            
+        except Exception:
+            pass
+            
         try:
             await websocket.close()
         except:
@@ -906,8 +1200,6 @@ async def predict_with_user(
             user_progress.level = new_level
         
         db.commit()
-        
-        print(f"Progress updated for user {current_user.id}: XP gained={xp_gained}, Total XP={new_xp}, Correct={is_correct}, Target word={target_word}")
         
         return {
             "success": True,
