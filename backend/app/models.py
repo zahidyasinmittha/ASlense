@@ -91,3 +91,39 @@ class AdminLog(Base):
     details = Column(Text)
     timestamp = Column(DateTime, default=func.now())
     ip_address = Column(String)
+
+class TranslationSession(Base):
+    __tablename__ = "translation_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    model_type = Column(String, nullable=False)  # "mediapipe", "openpose", "custom"
+    input_mode = Column(String, nullable=False)  # "word", "sentence"
+    started_at = Column(DateTime, default=func.now())
+    ended_at = Column(DateTime)
+    session_duration = Column(Integer)  # seconds
+    translations_count = Column(Integer, default=0)
+    correct_translations = Column(Integer, default=0)
+    total_confidence = Column(Float, default=0.0)
+    average_confidence = Column(Float)
+    accuracy_percentage = Column(Float)
+    
+    # Relationships
+    translations = relationship("TranslationHistory", back_populates="session")
+
+class TranslationHistory(Base):
+    __tablename__ = "translation_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("translation_sessions.id"), nullable=False)
+    predicted_text = Column(String, nullable=False)
+    target_text = Column(String)  # Optional - for accuracy tracking
+    confidence = Column(Float, nullable=False)
+    is_correct = Column(Boolean)  # True if predicted_text matches target_text
+    model_used = Column(String, nullable=False)
+    input_mode = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    
+    # Relationships
+    session = relationship("TranslationSession", back_populates="translations")

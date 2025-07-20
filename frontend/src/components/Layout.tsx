@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, Hand, Mail, Phone, MapPin, Github, Linkedin, Twitter, Heart, User, LogOut, Settings } from 'lucide-react';
+import { Menu, X, Hand, Mail, Phone, MapPin, Github, Linkedin, Twitter, Heart, User, LogOut, Settings, Languages, Home, BookOpen, Target, Info, MessageCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 interface LayoutProps {
@@ -9,17 +9,16 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const location = useLocation();
   const { user, logout, isAdmin } = useAuth();
 
   const navItems = [
-    { name: 'Home', path: '/' },
-    { name: 'Learn', path: '/learn' },
-    { name: 'Practice', path: '/practice' },
-    // { name: 'Translate', path: '/translate' }, // Commented out per user request
-    { name: 'About', path: '/about' },
-    { name: 'Contact', path: '/contact' },
+    { name: 'Home', path: '/', icon: Home },
+    { name: 'Learn', path: '/learn', icon: BookOpen },
+    { name: 'Practice', path: '/practice', icon: Target },
+    { name: 'Translate', path: '/translate', icon: Languages, featured: true },
+    { name: 'About', path: '/about', icon: Info },
+    { name: 'Contact', path: '/contact', icon: MessageCircle },
   ];
 
   const toggleMenu = () => {
@@ -69,23 +68,34 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center space-x-1">
-              {navItems.map((item, index) => (
-                <Link
-                  key={item.name}
-                  to={item.path}
-                  className={`relative px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 hover:scale-105 ${
-                    location.pathname === item.path
-                      ? 'text-blue-600 bg-blue-50 shadow-sm'
-                      : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
-                  }`}
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  {item.name}
-                  {location.pathname === item.path && (
-                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 bg-blue-600 rounded-full"></div>
-                  )}
-                </Link>
-              ))}
+              {navItems.map((item, index) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.path}
+                    className={`relative flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 hover:scale-105 ${
+                      item.featured
+                        ? location.pathname === item.path
+                          ? 'text-white bg-gradient-to-r from-purple-600 to-blue-600 shadow-lg shadow-purple-500/25'
+                          : 'text-purple-600 bg-gradient-to-r from-purple-50 to-blue-50 hover:from-purple-100 hover:to-blue-100 border border-purple-200'
+                        : location.pathname === item.path
+                        ? 'text-blue-600 bg-blue-50 shadow-sm'
+                        : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
+                    }`}
+                    style={{ animationDelay: `${index * 100}ms` }}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{item.name}</span>
+                    {item.featured && (
+                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full animate-pulse"></div>
+                    )}
+                    {location.pathname === item.path && !item.featured && (
+                      <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 bg-blue-600 rounded-full"></div>
+                    )}
+                  </Link>
+                );
+              })}
               
               {/* Authentication buttons */}
               <div className="ml-4 flex items-center space-x-3">
@@ -152,25 +162,36 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Mobile menu */}
         <div className={`md:hidden transition-all duration-300 ease-in-out ${isMenuOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
           <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 bg-white/95 backdrop-blur-md border-t border-gray-100">
-            {navItems.map((item, index) => (
-              <Link
-                key={item.name}
-                to={item.path}
-                onClick={() => setIsMenuOpen(false)}
-                className={`block px-3 py-2 rounded-md text-base font-medium transition-all duration-300 transform hover:scale-105 ${
-                  location.pathname === item.path
-                    ? 'text-blue-600 bg-blue-50'
-                    : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
-                }`}
-                style={{ 
-                  animationDelay: `${index * 50}ms`,
-                  transform: isMenuOpen ? 'translateX(0)' : 'translateX(-20px)',
-                  transition: `all 300ms ease-out ${index * 50}ms`
-                }}
-              >
-                {item.name}
-              </Link>
-            ))}
+            {navItems.map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.name}
+                  to={item.path}
+                  onClick={() => setIsMenuOpen(false)}
+                  className={`flex items-center space-x-3 px-3 py-2 rounded-md text-base font-medium transition-all duration-300 transform hover:scale-105 ${
+                    item.featured
+                      ? location.pathname === item.path
+                        ? 'text-white bg-gradient-to-r from-purple-600 to-blue-600'
+                        : 'text-purple-600 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200'
+                      : location.pathname === item.path
+                      ? 'text-blue-600 bg-blue-50'
+                      : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
+                  }`}
+                  style={{ 
+                    animationDelay: `${index * 50}ms`,
+                    transform: isMenuOpen ? 'translateX(0)' : 'translateX(-20px)',
+                    transition: `all 300ms ease-out ${index * 50}ms`
+                  }}
+                >
+                  <Icon className="h-5 w-5" />
+                  <span>{item.name}</span>
+                  {item.featured && (
+                    <div className="ml-auto w-2 h-2 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full animate-pulse"></div>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         </div>
       </nav>

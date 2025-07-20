@@ -52,6 +52,7 @@ const Practice: React.FC = () => {
   
   // Camera states - Clean and simple
   const [isRecording, setIsRecording] = useState(false);
+  // Simple session timer - starts from 0 each time
   const [sessionTime, setSessionTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -221,6 +222,23 @@ const Practice: React.FC = () => {
     }
   }, [user, token, fetchUserProgress, fetchRecentPracticeHistory]);
 
+  // Simple timer effect - just counts seconds from component mount
+  useEffect(() => {
+    if (user) {
+      console.log('⏰ Practice Component - Starting simple timer');
+      
+      // Update timer every second
+      const timerInterval = setInterval(() => {
+        setSessionTime(prev => prev + 1);
+      }, 1000);
+
+      return () => {
+        console.log('⏹️ Practice Component - Clearing timer');
+        clearInterval(timerInterval);
+      };
+    }
+  }, [user]);
+
   // Save practice history to localStorage whenever it changes
   useEffect(() => {
     try {
@@ -230,16 +248,16 @@ const Practice: React.FC = () => {
     }
   }, [practiceHistory]);
 
-  // Timer effect for recording
-  useEffect(() => {
-    let interval: number;
-    if (isRecording) {
-      interval = setInterval(() => {
-        setSessionTime(prev => prev + 1);
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isRecording]);
+  // Timer effect for recording - Remove this as we now use session manager
+  // useEffect(() => {
+  //   let interval: number;
+  //   if (isRecording) {
+  //     interval = setInterval(() => {
+  //       setSessionTime(prev => prev + 1);
+  //     }, 1000);
+  //   }
+  //   return () => clearInterval(interval);
+  // }, [isRecording]);
 
   // Auto-hide notification
   useEffect(() => {
@@ -260,6 +278,8 @@ const Practice: React.FC = () => {
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
       }
+      // Note: Don't end session here as we want it to persist across page reloads
+      // Session will only end on browser close, tab close, or logout via session manager
     };
   }, [wsConnection]);
 
@@ -386,7 +406,7 @@ const Practice: React.FC = () => {
       setCameraStream(null);
     }
     setIsRecording(false);
-    setSessionTime(0);
+    // Don't reset session time - let it persist via session manager
     
     if (wsConnection) {
       wsConnection.close();
@@ -556,6 +576,8 @@ const Practice: React.FC = () => {
       setConnectionStatus('disconnected');
     }
     
+    // No need to track predictions in session - just submit to backend
+    
     // Submit to backend for user tracking if authenticated
     if (user && token) {
       try {
@@ -700,6 +722,7 @@ const Practice: React.FC = () => {
   const handlePracticeModeChange = useCallback((mode: 'camera' | 'upload') => {
     setPracticeMode(mode);
     clearResults();
+    // No session tracking needed
   }, [clearResults]);
 
   // Utility functions

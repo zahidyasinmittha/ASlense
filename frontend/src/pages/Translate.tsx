@@ -1,110 +1,372 @@
-import React, { useState, useEffect } from 'react';
-import { Camera, Square, Play, RefreshCw, Settings, Mic, Zap, Activity, Globe, Download, Share2, Copy, Volume2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { 
+  Languages, 
+  Camera, 
+  Type, 
+  Target, 
+  Clock, 
+  Zap, 
+  CheckCircle, 
+  MessageSquare, 
+  Hand, 
+  History, 
+  X,
+  Video,
+  Square,
+  Settings,
+  Monitor
+} from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { translationSessionManager } from '../services/translationSessionManager';
+
+interface TranslationResult {
+  result: string;
+  confidence: number;
+  processingTime: number;
+  timestamp: Date;
+  mode: 'sign-to-text' | 'text-to-sign';
+  predictionType?: 'sentence' | 'word';
+}
+
+interface SessionStats {
+  totalTranslations: number;
+  averageAccuracy: number;
+  sessionTime: number;
+}
+
+interface RecentTranslation {
+  result: string;
+  confidence: number;
+  timestamp: Date;
+  mode: 'sign-to-text' | 'text-to-sign';
+  predictionType?: 'sentence' | 'word';
+}
+
+interface ModelOption {
+  id: string;
+  name: string;
+  accuracy: number;
+  speed: string;
+  description: string;
+}
 
 const Translate: React.FC = () => {
-  const [selectedModel, setSelectedModel] = useState('mediapipe');
-  const [inputMode, setInputMode] = useState('word');
-  const [isRecording, setIsRecording] = useState(false);
+  const { user, token, makeAuthenticatedRequest } = useAuth();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // Base URL for API calls
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  
+  // State management
+  const [translationMode, setTranslationMode] = useState<'sign-to-text' | 'text-to-sign'>('sign-to-text');
+  const [predictionMode, setPredictionMode] = useState<'sentence' | 'word'>('sentence');
+  const [selectedModel, setSelectedModel] = useState('hrnet-fast');
   const [detectedText, setDetectedText] = useState('');
+  const [targetText, setTargetText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [sessionStats, setSessionStats] = useState({ translations: 0, accuracy: 0, time: 0 });
-  const [translationHistory, setTranslationHistory] = useState([
-    { text: 'Hello, how are you?', timestamp: '2 min ago', confidence: 95, mode: 'sentence' },
-    { text: 'Thank you very much', timestamp: '5 min ago', confidence: 88, mode: 'word' },
-    { text: 'Nice to meet you', timestamp: '8 min ago', confidence: 92, mode: 'sentence' },
-    { text: 'Please', timestamp: '12 min ago', confidence: 94, mode: 'word' },
-    { text: 'Good morning', timestamp: '15 min ago', confidence: 89, mode: 'sentence' },
-  ]);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [lastResult, setLastResult] = useState<TranslationResult | null>(null);
+  const [sessionStats, setSessionStats] = useState<SessionStats>(() => {
+    // Initialize with current session stats if session exists
+    const stats = translationSessionManager.getSessionStats();
+    return stats ? {
+      totalTranslations: stats.translations,
+      averageAccuracy: stats.accuracy,
+      sessionTime: stats.session_time
+    } : {
+      totalTranslations: 0,
+      averageAccuracy: 0,
+      sessionTime: 0
+    };
+  });
+  const [recentTranslations, setRecentTranslations] = useState<RecentTranslation[]>([]);
+  
+  // User progress state (same as Practice module)
+  const [userProgress, setUserProgress] = useState({
+    signs_practiced: 0,
+    signs_learned: 0,
+    total_signs: 136,
+    accuracy_rate: 0,
+    current_level: 'Beginner',
+    current_xp: 0,
+    next_level_xp: 100,
+    level_progress: 0,
+    practice_streak: 0,
+    total_practice_time: 0,
+    signs_mastered: 0
+  });
 
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (isRecording) {
-      interval = setInterval(() => {
-        setSessionStats(prev => ({ ...prev, time: prev.time + 1 }));
-      }, 1000);
+  // Available models
+  const models: ModelOption[] = [
+    {
+      id: 'hrnet-fast',
+      name: 'HRNet Fast',
+      accuracy: 89,
+      speed: 'Fast',
+      description: 'Optimized for real-time performance'
+    },
+    {
+      id: 'hrnet-accurate',
+      name: 'HRNet Accurate',
+      accuracy: 94,
+      speed: 'Medium',
+      description: 'Higher accuracy, moderate speed'
+    },
+    {
+      id: 'ensemble-model',
+      name: 'Ensemble Model',
+      accuracy: 96,
+      speed: 'Slow',
+      description: 'Best accuracy, slower processing'
     }
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
-  const models = [
-    { id: 'mediapipe', name: 'MediaPipe v2.1', accuracy: '95%', speed: 'Fast', description: 'Best for real-time detection', color: 'blue' },
-    { id: 'openpose', name: 'OpenPose Enhanced', accuracy: '87%', speed: 'Medium', description: 'High accuracy for complex signs', color: 'purple' },
-    { id: 'custom', name: 'ASLense Custom', accuracy: '92%', speed: 'Fast', description: 'Optimized for ASL vocabulary', color: 'green' },
   ];
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
+  // Fetch user progress data (same as Practice module)
+  const fetchUserProgress = useCallback(async () => {
+    if (!user || !token) return;
     
-    if (!isRecording) {
-      setIsProcessing(true);
-      // Simulate detection
-      const words = ['Hello', 'Thank You', 'Please', 'How are you?', 'Nice to meet you'];
-      const sentences = [
-        'Hello, how are you today?',
-        'Thank you for your help.',
-        'Please wait a moment.',
-        'I am learning sign language.',
-        'Nice to meet you, my friend.',
-        'Good morning, have a great day!',
-        'See you later, take care!'
+    try {
+      const response = await makeAuthenticatedRequest(`${baseUrl}/user/progress`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUserProgress({
+          signs_practiced: data.signs_practiced || 0,
+          signs_learned: data.signs_learned || 0,
+          total_signs: data.total_signs || 136,
+          accuracy_rate: Math.round((data.accuracy_rate || 0) * 100) / 100,
+          current_level: data.current_level || 'Beginner',
+          current_xp: data.current_xp || 0,
+          next_level_xp: data.next_level_xp || 100,
+          level_progress: Math.round(((data.current_xp || 0) / (data.next_level_xp || 100)) * 100),
+          practice_streak: data.practice_streak || 0,
+          total_practice_time: data.total_practice_time || 0,
+          signs_mastered: data.signs_mastered || 0
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching user progress:', error);
+    }
+  }, [user, token, baseUrl, makeAuthenticatedRequest]);
+
+  // Initialize session on component mount
+  useEffect(() => {
+    if (user) {
+      translationSessionManager.startSession(user.id);
+      
+      // Fetch user progress from backend initially
+      fetchUserProgress();
+      
+      // Immediately update stats from existing session
+      const stats = translationSessionManager.getSessionStats();
+      if (stats) {
+        setSessionStats({
+          totalTranslations: stats.translations,
+          averageAccuracy: Math.round(userProgress.accuracy_rate), // Use backend accuracy
+          sessionTime: stats.session_time
+        });
+      }
+      
+      // Update stats every second
+      const statsInterval = setInterval(() => {
+        const stats = translationSessionManager.getSessionStats();
+        if (stats) {
+          setSessionStats({
+            totalTranslations: stats.translations,
+            averageAccuracy: Math.round(userProgress.accuracy_rate), // Use backend accuracy
+            sessionTime: stats.session_time
+          });
+        }
+      }, 1000);
+
+      // Refresh user progress every 30 seconds to keep accuracy updated
+      const progressInterval = setInterval(() => {
+        fetchUserProgress();
+      }, 30000);
+
+      return () => {
+        clearInterval(statsInterval);
+        clearInterval(progressInterval);
+        // Note: Don't end session here as we want it to persist across page reloads
+        // Session will only end on browser close, tab close, or logout via session manager
+      };
+    }
+  }, [user, fetchUserProgress, userProgress.accuracy_rate]);
+
+  // Cleanup camera on component unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  // Load recent translations
+  useEffect(() => {
+    const history = translationSessionManager.getRecentTranslations();
+    setRecentTranslations(history);
+  }, []);
+
+  const formatTime = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 }
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setIsCameraActive(true);
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      alert('Camera access denied or unavailable');
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+      setIsCameraActive(false);
+      setIsRecording(false);
+    }
+  };
+
+  const startPrediction = async () => {
+    if (!isCameraActive || isRecording) return;
+    
+    setIsRecording(true);
+    setIsProcessing(true);
+    
+    try {
+      // Simulate processing time based on prediction mode
+      const processingTime = predictionMode === 'sentence' ? 3000 + Math.random() * 2000 : 1500 + Math.random() * 1000;
+      await new Promise(resolve => setTimeout(resolve, processingTime));
+      
+      // Simulate prediction results
+      const confidence = Math.floor(85 + Math.random() * 15);
+      const actualProcessingTime = Math.floor(processingTime);
+      
+      const sentenceResults = [
+        "Hello, how are you today?",
+        "Thank you very much",
+        "Nice to meet you",
+        "What is your name?",
+        "Have a good day"
       ];
       
-      const results = inputMode === 'word' ? words : sentences;
-      const randomResult = results[Math.floor(Math.random() * results.length)];
-      const confidence = Math.floor(Math.random() * 20) + 80;
+      const wordResults = [
+        "Hello",
+        "Thank",
+        "You", 
+        "Please",
+        "Good",
+        "Day",
+        "Name"
+      ];
       
-      setTimeout(() => {
-        setDetectedText(randomResult);
-        setIsProcessing(false);
-        // Add to history
-        setTranslationHistory(prev => [
-          { text: randomResult, timestamp: 'Just now', confidence, mode: inputMode },
-          ...prev.slice(0, 4)
-        ]);
-        // Update stats
-        setSessionStats(prev => ({
-          ...prev,
-          translations: prev.translations + 1,
-          accuracy: Math.round((prev.accuracy * prev.translations + confidence) / (prev.translations + 1))
-        }));
-      }, inputMode === 'word' ? 1000 : 2500);
-    } else {
-      setDetectedText('');
+      const resultText = predictionMode === 'sentence' 
+        ? sentenceResults[Math.floor(Math.random() * sentenceResults.length)]
+        : wordResults[Math.floor(Math.random() * wordResults.length)];
+      
+      const result: TranslationResult = {
+        result: resultText,
+        confidence,
+        processingTime: actualProcessingTime,
+        timestamp: new Date(),
+        mode: 'sign-to-text',
+        predictionType: predictionMode
+      };
+
+      setDetectedText(result.result);
+      setLastResult(result);
+      
+      // Add to session
+      translationSessionManager.addTranslation({
+        result: result.result,
+        confidence: confidence,
+        mode: 'sign-to-text',
+        isCorrect: confidence > 85
+      });
+      
+      // Update recent translations
+      const updatedHistory = translationSessionManager.getRecentTranslations();
+      setRecentTranslations(updatedHistory);
+      
+    } catch (error) {
+      console.error('Prediction error:', error);
+    } finally {
+      setIsProcessing(false);
+      setIsRecording(false);
+    }
+  };
+
+  const stopPrediction = () => {
+    setIsRecording(false);
+    setIsProcessing(false);
+  };
+
+  const translateTextToSign = async () => {
+    if (!targetText.trim()) return;
+
+    setIsProcessing(true);
+    
+    try {
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 2500));
+      
+      // Simulate sign description result
+      const confidence = Math.floor(80 + Math.random() * 20);
+      const processingTime = Math.floor(1200 + Math.random() * 1800);
+      
+      const signDescriptions = [
+        "Start with both hands at chest level, move right hand forward in a greeting gesture, then point to yourself and make questioning expression with raised eyebrows.",
+        "Begin with a wave motion using your dominant hand, then touch your chest with your index finger, followed by pointing forward with open palm.",
+        "Initiate contact with a friendly hand gesture, point to self, then extend open palm toward the other person with questioning facial expression."
+      ];
+      
+      const result: TranslationResult = {
+        result: signDescriptions[Math.floor(Math.random() * signDescriptions.length)],
+        confidence,
+        processingTime,
+        timestamp: new Date(),
+        mode: 'text-to-sign'
+      };
+
+      setLastResult(result);
+      
+      // Add to session
+      translationSessionManager.addTranslation({
+        result: result.result,
+        confidence: confidence,
+        mode: 'text-to-sign',
+        isCorrect: confidence > 80 // Consider high confidence as correct
+      });
+      
+      // Update recent translations
+      const updatedHistory = translationSessionManager.getRecentTranslations();
+      setRecentTranslations(updatedHistory);
+      
+    } catch (error) {
+      console.error('Translation error:', error);
+    } finally {
       setIsProcessing(false);
     }
   };
 
   const clearResults = () => {
     setDetectedText('');
-    setIsRecording(false);
-    setIsProcessing(false);
+    setLastResult(null);
+    setTargetText('');
   };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  const speakText = (text: string) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      speechSynthesis.speak(utterance);
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-    const floatingElements = [
-    { emoji: '🤟', delay: 0, duration: 4 },
-    { emoji: '👋', delay: 1, duration: 5 },
-    { emoji: '✋', delay: 2, duration: 3 },
-    { emoji: '👌', delay: 3, duration: 6 },
-    { emoji: '🤲', delay: 4, duration: 4 },
-    { emoji: '👐', delay: 5, duration: 5 },
-  ];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -113,433 +375,377 @@ const Translate: React.FC = () => {
         <div className="text-center mb-8 animate-fade-in-up">
           <div className="relative group mb-6">
             <div className="absolute -inset-4 blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse"></div>
-            <Globe className="relative h-16 w-16 text-green-600 mx-auto animate-spin" style={{ animationDuration: '3s' }} />
+            <h1 className="relative text-4xl font-bold text-gray-800 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
+              ASL Translator
+            </h1>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">Real-Time Translation</h1>
-          <p className="text-xl text-gray-600">
-            Convert sign language gestures to text instantly with AI
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            Use your camera to translate sign language into text in real-time, or translate text into sign descriptions
           </p>
-           {floatingElements.map((element, i) => (
-            <div
-              key={i}
-              className="absolute text-4xl opacity-20 animate-float pointer-events-none"
-              style={{
-                left: `${10 + (i * 15)}%`,
-                top: `${20 + (i * 10)}%`,
-                animationDelay: `${element.delay}s`,
-                animationDuration: `${element.duration}s`
-              }}
+        </div>
+
+        {/* Translation Mode Selector */}
+        <div className="flex justify-center mb-8">
+          <div className="bg-white rounded-xl shadow-lg p-2 border border-gray-200">
+            <button
+              onClick={() => setTranslationMode('sign-to-text')}
+              className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 ${
+                translationMode === 'sign-to-text'
+                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg transform scale-105'
+                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+              }`}
             >
-              {element.emoji}
-            </div>
-          ))}
-           {/* Rotating rings */}
-                      <div className="absolute inset-0 border-2 border-blue-400/30 rounded-full animate-spin" style={{ animationDuration: '20s' }}></div>
-                      <div className="absolute inset-4 border-2 border-purple-400/30 rounded-full animate-spin" style={{ animationDuration: '15s', animationDirection: 'reverse' }}></div>
-                      <div className="absolute inset-8 border-2 border-pink-400/30 rounded-full animate-spin" style={{ animationDuration: '10s' }}></div>
+              <Camera className="inline-block w-5 h-5 mr-2" />
+              Sign to Text
+            </button>
+            <button
+              onClick={() => setTranslationMode('text-to-sign')}
+              className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 ${
+                translationMode === 'text-to-sign'
+                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg transform scale-105'
+                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+              }`}
+            >
+              <Type className="inline-block w-5 h-5 mr-2" />
+              Text to Sign
+            </button>
+          </div>
         </div>
 
         {/* Session Stats */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-8 animate-fade-in-up animation-delay-200">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600 animate-counter">{sessionStats.translations}</div>
-              <div className="text-sm text-gray-600">Translations</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 bg-gradient-to-r from-blue-100 to-blue-200 rounded-lg">
+                <Languages className="h-8 w-8 text-blue-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">Translations</p>
+                <p className="text-2xl font-bold text-gray-800">{sessionStats.totalTranslations}</p>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600 animate-counter">{sessionStats.accuracy}%</div>
-              <div className="text-sm text-gray-600">Avg. Accuracy</div>
+          </div>
+          
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 bg-gradient-to-r from-green-100 to-green-200 rounded-lg">
+                <Target className="h-8 w-8 text-green-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">Avg. Accuracy</p>
+                <p className="text-2xl font-bold text-gray-800">{sessionStats.averageAccuracy}%</p>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-600">{formatTime(sessionStats.time)}</div>
-              <div className="text-sm text-gray-600">Session Time</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600 capitalize">{inputMode}</div>
-              <div className="text-sm text-gray-600">Current Mode</div>
+          </div>
+          
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 bg-gradient-to-r from-purple-100 to-purple-200 rounded-lg">
+                <Clock className="h-8 w-8 text-purple-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">Session Time</p>
+                <p className="text-2xl font-bold text-gray-800">{formatTime(sessionStats.sessionTime)}</p>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Settings Panel */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Model Selection */}
-            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-left">
-              <div className="flex items-center space-x-2 mb-4">
-                <Settings className="h-5 w-5 text-gray-600" />
-                <h3 className="text-lg font-semibold text-gray-900">AI Model</h3>
-              </div>
-              <div className="space-y-3">
-                {models.map((model) => (
-                  <label key={model.id} className="group flex items-center space-x-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 transition-colors duration-200">
-                    <input
-                      type="radio"
-                      name="model"
-                      value={model.id}
-                      checked={selectedModel === model.id}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors duration-200">
-                        {model.name}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">{model.description}</div>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <span className={`text-xs px-2 py-1 bg-${model.color}-100 text-${model.color}-700 rounded-full`}>
-                          {model.accuracy}
-                        </span>
-                        <span className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
-                          {model.speed}
-                        </span>
-                      </div>
-                    </div>
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Input Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+              {translationMode === 'sign-to-text' ? (
+                <><Camera className="w-5 h-5 mr-2" />Camera Detection</>
+              ) : (
+                <><Type className="w-5 h-5 mr-2" />Enter Text</>
+              )}
+            </h2>
+            
+            {translationMode === 'sign-to-text' ? (
+              <div className="space-y-6">
+                {/* Model Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    <Settings className="inline w-4 h-4 mr-1" />
+                    Select Model
                   </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Input Mode */}
-            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-left animation-delay-200">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <Activity className="h-5 w-5 mr-2 text-purple-600" />
-                Input Mode
-              </h3>
-              <div className="space-y-3">
-                <label className="group flex items-center space-x-3 cursor-pointer p-4 rounded-lg hover:bg-gray-50 transition-colors duration-200 border-2 border-transparent hover:border-blue-200">
-                  <input
-                    type="radio"
-                    name="inputMode"
-                    value="word"
-                    checked={inputMode === 'word'}
-                    onChange={(e) => setInputMode(e.target.value)}
-                    className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                  />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors duration-200 flex items-center">
-                      <Zap className="h-4 w-4 mr-2 text-yellow-500" />
-                      Word Detection
-                    </div>
-                    <div className="text-sm text-gray-500">Real-time word recognition</div>
-                  </div>
-                </label>
-                <label className="group flex items-center space-x-3 cursor-pointer p-4 rounded-lg hover:bg-gray-50 transition-colors duration-200 border-2 border-transparent hover:border-purple-200">
-                  <input
-                    type="radio"
-                    name="inputMode"
-                    value="sentence"
-                    checked={inputMode === 'sentence'}
-                    onChange={(e) => setInputMode(e.target.value)}
-                    className="w-4 h-4 text-purple-600 focus:ring-purple-500"
-                  />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900 group-hover:text-purple-600 transition-colors duration-200 flex items-center">
-                      <Mic className="h-4 w-4 mr-2 text-purple-500" />
-                      Sentence Mode
-                    </div>
-                    <div className="text-sm text-gray-500">Record complete sentences</div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Translation History */}
-            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-left animation-delay-400">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <Globe className="h-5 w-5 mr-2 text-green-600" />
-                Recent Translations
-              </h3>
-              <div className="space-y-3 max-h-80 overflow-y-auto">
-                {translationHistory.map((item, index) => (
-                  <div key={index} className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors duration-200 group animate-fade-in-up" style={{ animationDelay: `${index * 100}ms` }}>
-                    <div className="text-sm font-medium text-gray-900 mb-1 line-clamp-2">{item.text}</div>
-                    <div className="flex justify-between items-center text-xs text-gray-500">
-                      <div className="flex items-center space-x-2">
-                        <span>{item.timestamp}</span>
-                        <span className={`px-2 py-1 rounded-full ${
-                          item.mode === 'word' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                  <div className="grid grid-cols-1 gap-3">
+                    {models.map((model) => (
+                      <label key={model.id} className="cursor-pointer">
+                        <input
+                          type="radio"
+                          name="model"
+                          value={model.id}
+                          checked={selectedModel === model.id}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          className="sr-only"
+                        />
+                        <div className={`p-3 rounded-lg border transition-all duration-200 ${
+                          selectedModel === model.id
+                            ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200'
+                            : 'border-gray-200 hover:border-gray-300'
                         }`}>
-                          {item.mode}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full">
-                          {item.confidence}%
-                        </span>
-                        <button
-                          onClick={() => copyToClipboard(item.text)}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded transition-all duration-200"
-                        >
-                          <Copy className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-left animation-delay-600">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-              <div className="space-y-3">
-                <button
-                  onClick={clearResults}
-                  className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-300 transform hover:scale-105"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  <span>Clear Results</span>
-                </button>
-                <button className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-all duration-300 transform hover:scale-105">
-                  <Download className="h-4 w-4" />
-                  <span>Export History</span>
-                </button>
-                <button className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-all duration-300 transform hover:scale-105">
-                  <Share2 className="h-4 w-4" />
-                  <span>Share Session</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="lg:col-span-3 space-y-6">
-            {/* Camera Feed */}
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden animate-fade-in-up animation-delay-800">
-              <div className="relative bg-gradient-to-br from-gray-800 via-blue-900 to-purple-900 h-96 flex items-center justify-center overflow-hidden">
-                {/* Animated Background */}
-                <div className="absolute inset-0">
-                  <div className="absolute top-0 left-0 w-full h-full">
-                    {[...Array(30)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="absolute w-2 h-2 bg-white/10 rounded-full animate-float"
-                        style={{
-                          left: `${Math.random() * 100}%`,
-                          top: `${Math.random() * 100}%`,
-                          animationDelay: `${Math.random() * 3}s`,
-                          animationDuration: `${3 + Math.random() * 2}s`
-                        }}
-                      ></div>
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-medium text-gray-900">{model.name}</h4>
+                              <p className="text-sm text-gray-600">{model.description}</p>
+                            </div>
+                            <div className="text-right text-sm">
+                              <div className="text-green-600 font-medium">{model.accuracy}% accuracy</div>
+                              <div className="text-gray-500">{model.speed}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </label>
                     ))}
                   </div>
                 </div>
 
-                {/* Grid overlay */}
-                <div className="absolute inset-0 opacity-5">
-                  <div className="grid grid-cols-12 grid-rows-8 h-full w-full">
-                    {[...Array(96)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="border border-white/30 animate-pulse"
-                        style={{ animationDelay: `${i * 20}ms` }}
-                      ></div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="relative text-center text-white z-10">
-                  <div className="relative group">
-                    <div className={`absolute -inset-8 rounded-full blur transition-all duration-300 ${
-                      isRecording 
-                        ? inputMode === 'word' 
-                          ? 'bg-blue-500/30 animate-pulse-glow' 
-                          : 'bg-purple-500/30 animate-pulse-glow'
-                        : 'bg-gray-500/20'
-                    }`}></div>
-                    <Camera className={`relative h-24 w-24 mx-auto mb-4 opacity-90 transition-all duration-300 ${
-                      isRecording 
-                        ? inputMode === 'word'
-                          ? 'text-blue-400 animate-pulse'
-                          : 'text-purple-400 animate-pulse'
-                        : 'text-gray-400'
-                    } ${isProcessing ? 'animate-spin' : ''}`} />
-                  </div>
-                  <p className="text-lg font-medium">
-                    {isProcessing 
-                      ? 'Processing your signs...'
-                      : isRecording 
-                        ? inputMode === 'word' 
-                          ? 'Detecting signs in real-time...' 
-                          : 'Recording sentence...'
-                        : 'Camera ready for translation'
-                    }
-                  </p>
-                  <p className="text-sm opacity-75 mt-2">
-                    {isProcessing
-                      ? 'AI is analyzing your gestures'
-                      : inputMode === 'word' 
-                        ? 'Live translation will appear below'
-                        : 'Complete sentences will be processed after recording'
-                    }
-                  </p>
-                  
-                  {isRecording && (
-                    <div className={`absolute top-4 right-4 flex items-center space-x-2 backdrop-blur-sm rounded-lg px-3 py-2 animate-slide-down ${
-                      inputMode === 'word' ? 'bg-blue-500/20' : 'bg-purple-500/20'
-                    }`}>
-                      <div className={`w-3 h-3 rounded-full animate-pulse ${
-                        inputMode === 'word' ? 'bg-blue-500' : 'bg-purple-500'
-                      }`}></div>
-                      <span className="text-sm font-medium">
-                        {inputMode === 'word' ? 'Detecting...' : 'Recording...'}
-                      </span>
-                    </div>
-                  )}
-
-                  {isProcessing && (
-                    <div className="absolute top-4 left-4 flex items-center space-x-2 bg-yellow-500/20 backdrop-blur-sm rounded-lg px-3 py-2 animate-slide-down">
-                      <div className="w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium">Processing...</span>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Recording overlay for sentence mode */}
-                {inputMode === 'sentence' && isRecording && (
-                  <div className="absolute inset-0 bg-purple-500/10 border-4 border-purple-500/50 rounded-lg animate-pulse"></div>
-                )}
-              </div>
-
-              {/* Controls */}
-              <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50">
-                <div className="flex items-center justify-center space-x-4">
-                  {inputMode === 'word' ? (
+                {/* Prediction Mode Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    <Monitor className="inline w-4 h-4 mr-1" />
+                    Prediction Mode
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
                     <button
-                      onClick={toggleRecording}
-                      disabled={isProcessing}
-                      className={`group flex items-center space-x-3 px-8 py-4 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed ${
-                        isRecording
-                          ? 'bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800'
-                          : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800'
+                      onClick={() => setPredictionMode('sentence')}
+                      className={`p-3 rounded-lg border transition-all duration-200 ${
+                        predictionMode === 'sentence'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 hover:border-gray-300 text-gray-700'
                       }`}
                     >
-                      <Camera className="h-5 w-5 group-hover:scale-110 transition-transform duration-300" />
-                      <span>{isRecording ? 'Stop Detection' : 'Start Detection'}</span>
+                      <MessageSquare className="w-5 h-5 mx-auto mb-1" />
+                      <div className="text-sm font-medium">Sentence</div>
+                      <div className="text-xs">Full phrases</div>
+                    </button>
+                    <button
+                      onClick={() => setPredictionMode('word')}
+                      className={`p-3 rounded-lg border transition-all duration-200 ${
+                        predictionMode === 'word'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                      }`}
+                    >
+                      <Type className="w-5 h-5 mx-auto mb-1" />
+                      <div className="text-sm font-medium">Word</div>
+                      <div className="text-xs">Individual words</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Camera Feed */}
+                <div className="relative">
+                  <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                    {!isCameraActive && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+                        <div className="text-center text-white">
+                          <Camera className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">Camera not active</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <canvas ref={canvasRef} className="hidden" />
+                </div>
+
+                {/* Camera Controls */}
+                <div className="flex gap-3">
+                  {!isCameraActive ? (
+                    <button
+                      onClick={startCamera}
+                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center justify-center"
+                    >
+                      <Video className="w-4 h-4 mr-2" />
+                      Start Camera
                     </button>
                   ) : (
-                    <button
-                      onClick={toggleRecording}
-                      disabled={isProcessing}
-                      className={`group flex items-center space-x-3 px-8 py-4 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed ${
-                        isRecording
-                          ? 'bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800'
-                          : 'bg-gradient-to-r from-purple-600 to-purple-700 text-white hover:from-purple-700 hover:to-purple-800'
-                      }`}
-                    >
-                      {isRecording ? (
-                        <>
-                          <Square className="h-5 w-5 group-hover:scale-110 transition-transform duration-300" />
-                          <span>Stop Recording</span>
-                        </>
+                    <>
+                      <button
+                        onClick={stopCamera}
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center justify-center"
+                      >
+                        <Square className="w-4 h-4 mr-2" />
+                        Stop Camera
+                      </button>
+                      {!isRecording ? (
+                        <button
+                          onClick={startPrediction}
+                          disabled={isProcessing}
+                          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                        >
+                          <Zap className="w-4 h-4 mr-2" />
+                          Start Detection
+                        </button>
                       ) : (
-                        <>
-                          <Play className="h-5 w-5 group-hover:scale-110 transition-transform duration-300" />
-                          <span>Start Recording</span>
-                        </>
+                        <button
+                          onClick={stopPrediction}
+                          className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center justify-center"
+                        >
+                          <Square className="w-4 h-4 mr-2" />
+                          Stop Detection
+                        </button>
                       )}
-                    </button>
+                    </>
                   )}
                 </div>
-              </div>
-            </div>
 
-            {/* Results */}
-            <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-up animation-delay-1000">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <Globe className="h-5 w-5 mr-2 text-green-600" />
-                {inputMode === 'word' ? 'Live Translation' : 'Sentence Translation'}
-              </h3>
-              
-              {isProcessing ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="relative">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                    <div className="absolute inset-0 animate-ping rounded-full h-12 w-12 border border-blue-400 opacity-25"></div>
+                {isProcessing && (
+                  <div className="text-center">
+                    <div className="inline-flex items-center px-4 py-2 bg-blue-50 rounded-lg">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
+                      <span className="text-blue-700">
+                        {predictionMode === 'sentence' ? 'Analyzing sentence...' : 'Detecting word...'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="ml-4 text-gray-600 font-medium">Processing your signs...</span>
+                )}
+              </div>
+            ) : (
+              <div>
+                <textarea
+                  value={targetText}
+                  onChange={(e) => setTargetText(e.target.value)}
+                  placeholder="Enter text to translate to sign language..."
+                  className="w-full h-32 p-4 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300"
+                />
+                <div className="mt-4 flex justify-between">
+                  <span className="text-sm text-gray-500">
+                    {targetText.length}/500 characters
+                  </span>
+                  <button
+                    onClick={translateTextToSign}
+                    disabled={!targetText.trim() || isProcessing}
+                    className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white inline-block mr-2"></div>
+                        Translating...
+                      </>
+                    ) : (
+                      <>
+                        <Languages className="inline-block w-4 h-4 mr-2" />
+                        Translate
+                      </>
+                    )}
+                  </button>
                 </div>
-              ) : detectedText ? (
-                <div className="space-y-6 animate-fade-in-up">
-                  <div className="bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 rounded-xl p-6 border border-blue-100">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="text-2xl font-bold text-gray-900 mb-3 animate-typewriter">{detectedText}</div>
-                        <div className="text-sm text-blue-700 font-medium">
-                          {inputMode === 'word' ? 'Live detection result' : 'Sentence translation complete'}
-                        </div>
+              </div>
+            )}
+          </div>
+
+          {/* Results Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+                <Zap className="w-5 h-5 mr-2" />
+                Translation Result
+              </h2>
+              {(detectedText || lastResult) && (
+                <button
+                  onClick={clearResults}
+                  className="text-gray-500 hover:text-red-500 transition-colors duration-300"
+                  title="Clear results"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+            
+            <div className="space-y-4">
+              {translationMode === 'sign-to-text' ? (
+                detectedText ? (
+                  <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
+                    <div className="flex items-center mb-2">
+                      <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                      <span className="font-medium text-green-800">Detected Text:</span>
+                    </div>
+                    <p className="text-gray-800 text-lg">{detectedText}</p>
+                    {lastResult && (
+                      <div className="mt-3 pt-3 border-t border-green-200">
+                        <p className="text-sm text-gray-600">
+                          Confidence: <span className="font-medium">{lastResult.confidence}%</span>
+                        </p>
                       </div>
-                      <div className="flex items-center space-x-2 ml-4">
-                        <button
-                          onClick={() => speakText(detectedText)}
-                          className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors duration-200"
-                          title="Speak text"
-                        >
-                          <Volume2 className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(detectedText)}
-                          className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors duration-200"
-                          title="Copy to clipboard"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </button>
-                        <div className="flex items-center space-x-2">
-                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                          <span className="text-sm text-green-600 font-medium">Active</span>
-                        </div>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                    <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                      <span className="text-gray-600">Model</span>
-                      <span className="font-medium text-gray-900">
-                        {models.find(m => m.id === selectedModel)?.name.split(' ')[0]}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                      <span className="text-gray-600">Mode</span>
-                      <span className="font-medium text-gray-900 capitalize">
-                        {inputMode === 'word' ? 'Real-time' : 'Batch'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                      <span className="text-gray-600">Confidence</span>
-                      <span className="font-medium text-green-600">
-                        {translationHistory[0]?.confidence || 0}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                      <span className="text-gray-600">Status</span>
-                      <span className="font-medium text-green-600">Complete</span>
-                    </div>
+                ) : (
+                  <div className="p-8 text-center text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
+                    <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Translation results will appear here</p>
                   </div>
-                </div>
+                )
               ) : (
-                <div className="text-center py-12 text-gray-500">
-                  <div className="relative mb-4">
-                    <Globe className="h-16 w-16 mx-auto opacity-20 animate-pulse" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-dashed rounded-full animate-spin opacity-30"></div>
+                lastResult ? (
+                  <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+                    <div className="flex items-center mb-2">
+                      <CheckCircle className="w-5 h-5 text-purple-600 mr-2" />
+                      <span className="font-medium text-purple-800">Sign Description:</span>
+                    </div>
+                    <p className="text-gray-800 text-lg mb-3">{lastResult.result}</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Confidence:</span>
+                        <span className="font-medium">{lastResult.confidence}%</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Processing Time:</span>
+                        <span className="font-medium">{lastResult.processingTime}ms</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="text-lg font-medium mb-2">
-                    {inputMode === 'word' ? 'Start detection to see live results' : 'Record a sentence to translate'}
+                ) : (
+                  <div className="p-8 text-center text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
+                    <Hand className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Sign descriptions will appear here</p>
                   </div>
-                  <div className="text-sm">
-                    {inputMode === 'word' 
-                      ? 'Real-time word detection will appear here instantly'
-                      : 'Complete sentences will be translated after recording'
-                    }
-                  </div>
-                </div>
+                )
               )}
             </div>
           </div>
         </div>
+
+        {/* Recent Translations */}
+        {recentTranslations.length > 0 && (
+          <div className="mt-8">
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                <History className="w-5 h-5 mr-2" />
+                Recent Translations
+              </h3>
+              <div className="space-y-3">
+                {recentTranslations.slice(0, 3).map((translation, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors duration-300">
+                    <div className="flex-1">
+                      <p className="text-sm text-gray-600">
+                        {translation.mode === 'sign-to-text' ? (
+                          `Sign → Text ${translation.predictionType ? `(${translation.predictionType})` : ''}`
+                        ) : (
+                          'Text → Sign'
+                        )}
+                      </p>
+                      <p className="text-gray-800 truncate">{translation.result}</p>
+                    </div>
+                    <div className="text-right text-sm text-gray-500">
+                      <p>{translation.confidence}% confidence</p>
+                      <p>{new Date(translation.timestamp).toLocaleTimeString()}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

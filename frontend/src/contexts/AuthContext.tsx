@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { translationSessionManager } from '../services/translationSessionManager';
 
 export interface User {
   id: number;
@@ -212,6 +213,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const logout = () => {
+    // End active sessions before clearing user data
+    if (translationSessionManager.isSessionActive()) {
+      translationSessionManager.endSession('logout');
+    }
+    // No practice session cleanup needed - simple timer will reset on page reload
+    
     setUser(null);
     setToken(null);
     setRefreshToken(null);
