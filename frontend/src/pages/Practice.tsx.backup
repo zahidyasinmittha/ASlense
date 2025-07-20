@@ -26,15 +26,10 @@ interface PredictionResult {
 }
 
 interface LivePredictionMessage {
-  type: 'connected' | 'frame_received' | 'progress' | 'final_result' | 'error' | 'stopped';
+  type: 'predictions' | 'error';
+  predictions?: Prediction[];
   message?: string;
-  frame_count?: number;
-  frames_processed?: number;
-  predictions_count?: number;
-  latest_predictions?: Prediction[];
-  result?: PredictionResult;
-  total_frames?: number;
-  total_predictions?: number;
+  timestamp?: number;
 }
 
 const Practice: React.FC = () => {
@@ -50,26 +45,15 @@ const Practice: React.FC = () => {
   const [wordSearch, setWordSearch] = useState('');
   const [isWordDropdownOpen, setIsWordDropdownOpen] = useState(false);
   
-  // Camera states - RESTORED ORIGINAL
+  // Camera states
   const [isRecording, setIsRecording] = useState(false);
   const [sessionTime, setSessionTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
-  
-  // NEW: File streaming test states
-  const [isFileStreaming, setIsFileStreaming] = useState(false);
-  const [fileVideoRef, setFileVideoRef] = useState<HTMLVideoElement | null>(null);
-  const [isFileStreamingReady, setIsFileStreamingReady] = useState(false);
   const [isGestureActive, setIsGestureActive] = useState(false);
   const [collectedPredictions, setCollectedPredictions] = useState<Prediction[][]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [capturedFrameCount, setCapturedFrameCount] = useState(0);
-  
-  // Simple frame capture states (like CameraTest)
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
-  const [captureInterval, setCaptureInterval] = useState(150); // ms between frames
   
   // WebSocket states for live prediction
   const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
@@ -293,324 +277,142 @@ const Practice: React.FC = () => {
     }
   }, [isWordDropdownOpen, filteredWords]);
 
-  // RESTORED - Original frame capture function for camera
-  const captureFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) {
-      console.log('❌ Missing video or canvas ref');
-      return null;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) {
-      console.log('❌ No canvas context');
-      return null;
-    }
-
-    // Check camera vs file streaming mode
-    const isFromCamera = !!video.srcObject;
-    const isFromFile = !!video.src && !video.srcObject;
-    
-    console.log('🔍 Video state for capture:', {
-      videoWidth: video.videoWidth,
-      videoHeight: video.videoHeight,
-      readyState: video.readyState,
-      paused: video.paused,
-      currentTime: video.currentTime,
-      networkState: video.networkState,
-      isFromCamera: isFromCamera,
-      isFromFile: isFromFile,
-      srcObject: !!video.srcObject,
-      src: !!video.src
-    });
-
-    // Check if video is actually ready and has dimensions
-    if (video.videoWidth === 0 || video.videoHeight === 0) {
-      console.log('❌ Video not ready - dimensions:', video.videoWidth, 'x', video.videoHeight);
-      console.log('🔄 Ready state:', video.readyState, '(4 = HAVE_ENOUGH_DATA)');
-      
-      if (video.srcObject && video.readyState < 4) {
-        console.log('⏳ Camera video has stream but not fully loaded, waiting...');
-      } else if (video.src && video.readyState < 4) {
-        console.log('⏳ File video has src but not fully loaded, waiting...');
-      }
-      return null;
-    }
-
-    // Set canvas size to match video (updated fallback for higher res)
-    canvas.width = video.videoWidth || 640;   // Match original to_4.mp4 exactly
-    canvas.height = video.videoHeight || 480; // Match original to_4.mp4 exactly
-    
-    console.log('📐 Canvas size:', canvas.width, 'x', canvas.height);
-    
-    // Draw current frame to canvas
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    // Convert canvas to data URL
-    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);  // High quality for better predictions
-    const mode = isFromCamera ? 'camera' : 'file';
-    console.log(`🖼️ Frame captured from ${mode}, data URL length:`, frameDataUrl.length);
-    
-    // Validate frame data
-    if (frameDataUrl.length < 1000) {
-      console.log('❌ Frame data too small, skipping');
-      return null;
-    }
-
-    return frameDataUrl;
-  }, []);
-
-  // RESTORED - Original gesture start function for camera
+  // Optimized gesture start function
   const startGesture = useCallback(() => {
-    console.log('🚀 Starting gesture - initial checks...');
-    console.log('🔍 Initial state:', {
-      hasVideo: !!videoRef.current,
-      hasCameraStream: !!cameraStream,
-      targetWord: targetWord,
-      cameraStreamActive: cameraStream?.active,
-      isRecording: isRecording
-    });
-    
     if (!videoRef.current || !cameraStream || !targetWord) {
-      console.log('❌ Failed initial checks:', {
-        hasVideo: !!videoRef.current,
-        hasCameraStream: !!cameraStream,
-        hasTargetWord: !!targetWord
-      });
       showNotification('error', 'Please ensure camera is active and target word is selected');
       return;
     }
     
-    console.log('✅ Initial checks passed, proceeding with gesture start...');
-    
-    // First, cleanup any existing connections
-    if (wsConnection) {
-      console.log('🧹 Cleaning up existing WebSocket connection');
-      wsConnection.close();
-      setWsConnection(null);
-    }
-    
-    if (frameIntervalRef.current) {
-      console.log('🧹 Cleaning up existing frame interval');
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
-    }
-    
-    // Reset states
     setIsGestureActive(true);
     setCollectedPredictions([]);
-    setConnectionStatus('disconnected');
-    setLivePredictions(null);
-    setCapturedFrameCount(0); // Reset frame counter
     
-    // Small delay to ensure cleanup is complete
-    setTimeout(() => {
-      console.log('🔗 Starting new WebSocket connection for camera');
-      console.log('🔍 WebSocket URL:', `${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
-      setConnectionStatus('connecting');
-      const ws = new WebSocket(`${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
-      
-      ws.onopen = () => {
-        console.log('✅ WebSocket connected for live prediction');
-        console.log('🔍 WebSocket state:', {
-          readyState: ws.readyState,
-          url: ws.url,
-          protocol: ws.protocol
-        });
-        setConnectionStatus('connected');
-        setWsConnection(ws);
-        
-        // Store WebSocket reference for use in interval
-        const currentWs = ws;
-        
-        // Start frame interval AFTER WebSocket is connected
-        console.log('🎬 Starting frame interval after WebSocket connection');
-        
-        // Clear any existing interval (safety check)
-        if (frameIntervalRef.current) {
-          console.log('🧹 Clearing existing interval before starting new one');
-          clearInterval(frameIntervalRef.current);
-        }
-        
-        // Start natural frame capture at 45 FPS (user-controlled duration)
-        let frameCount = 0;
-        const TARGET_FPS = 45; // Capture at 45 FPS for ultra-high quality ASL recognition
-        const FRAME_INTERVAL = 1000 / TARGET_FPS; // 22.22ms between frames for 45 FPS
-        console.log(`⏰ Starting 45 FPS frame capture with ${FRAME_INTERVAL}ms interval...`);
-        frameIntervalRef.current = window.setInterval(() => {
-          console.log('📸 Interval tick - checking conditions');
-          
-          // Check WebSocket connection
-          if (!currentWs || currentWs.readyState !== WebSocket.OPEN) {
-            console.log('❌ WebSocket not ready:', currentWs?.readyState);
-            return;
-          }
-          
-          // Use the optimized capture function
-          const frameDataUrl = captureFrame();
-          
-          if (frameDataUrl) {
-            // Send frame via WebSocket
-            currentWs.send(JSON.stringify({
-              type: 'frame',
-              frame: frameDataUrl
-            }));
-            frameCount++;
-            setCapturedFrameCount(frameCount); // Update UI counter
-            console.log(`📤 Frame ${frameCount} sent to WebSocket at 45 FPS, size: ${Math.round(frameDataUrl.length / 1024)}KB`);
-            
-            // Continue capturing until user stops (natural duration like upload method)
-            console.log(`📊 Natural capture at 45 FPS: ${frameCount} frames collected, waiting for user to stop...`);
-          }
-        }, FRAME_INTERVAL); // Send frame every 22.22ms (45 frames per second)
-        
-        // Also capture first frame immediately
-        setTimeout(() => {
-          if (currentWs.readyState === WebSocket.OPEN) {
-            const frameDataUrl = captureFrame();
-            
-            if (frameDataUrl) {
-              currentWs.send(JSON.stringify({
-                type: 'frame',
-                frame: frameDataUrl
-              }));
-              console.log('📤 First frame sent immediately, size:', Math.round(frameDataUrl.length / 1024) + 'KB');
-            } else {
-              console.log('❌ First frame capture failed');
-            }
-          }
-        }, 500); // Increased delay to give video more time to initialize
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: LivePredictionMessage = JSON.parse(event.data);
-          console.log('WebSocket message received:', data);
-          
-          switch (data.type) {
-            case 'connected':
-              console.log('WebSocket connected:', data.message);
-              break;
-              
-            case 'frame_received':
-              console.log(`Frame ${data.frame_count} processed`);
-              break;
-              
-            case 'progress':
-              console.log(`Progress: ${data.frames_processed} frames processed`);
-              if (data.latest_predictions) {
-                setLivePredictions(data.latest_predictions);
-                
-                // If gesture is active, collect predictions for analysis
-                if (isGestureActive) {
-                  setCollectedPredictions(prev => [...prev, data.latest_predictions!]);
-                }
-              }
-              break;
-              
-            case 'final_result':
-              console.log('Final result received:', data.result);
-              if (data.result) {
-                handlePredictionResult(data.result);
-              }
-              break;
-              
-            case 'stopped':
-              console.log('Recording stopped:', data.message);
-              // If we get a "no frames" message, provide helpful feedback
-              if (data.message && data.message.includes('No frames')) {
-                showNotification('error', 'No frames were captured. Please ensure the camera is working and try holding your gesture longer.');
-                setIsAnalyzing(false);
-              }
-              break;
-              
-            case 'error':
-              console.error('WebSocket error:', data.message);
-              if (data.message && data.message.includes('No predictions available')) {
-                showNotification('error', 'No frames were processed. Please try holding your gesture longer and ensure good lighting.');
-              } else {
-                showNotification('error', data.message || 'WebSocket error occurred');
-              }
-              setIsAnalyzing(false);
-              break;
-          }
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      };
-
-      ws.onclose = () => {
-        console.log('🔌 WebSocket disconnected');
-        console.log('🔍 Close event details:', {
-          readyState: ws.readyState,
-          url: ws.url
-        });
-        setConnectionStatus('disconnected');
-        setWsConnection(null);
-        setIsLivePredicting(false);
-      };
-
-      ws.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-        console.log('🔍 Error details:', {
-          readyState: ws.readyState,
-          url: ws.url,
-          error: error
-        });
-        setConnectionStatus('disconnected');
-        showNotification('error', 'WebSocket connection failed. Check if backend is running.');
-      };
-    }, 300); // 300ms delay for cleanup
+    // Start WebSocket connection for real-time predictions
+    connectWebSocket();
+    
+    // Start collecting predictions
+    frameIntervalRef.current = setInterval(() => {
+      if (isGestureActive) {
+        captureAndCollectPrediction();
+      }
+    }, 200); // Collect predictions every 200ms
     
     showNotification('info', 'Gesture recording started! Perform your sign now.');
-    console.log('✅ Gesture started successfully');
-  }, [videoRef, cameraStream, targetWord, showNotification, wsUrl, selectedModel, wsConnection, connectionStatus, captureFrame]);
+  }, [videoRef, cameraStream, targetWord, showNotification, isGestureActive]);
 
   // Optimized gesture end function
   const endGesture = useCallback(async () => {
     if (!isGestureActive) return;
     
-    console.log('🛑 Ending gesture...');
     setIsGestureActive(false);
     setIsAnalyzing(true);
     
     // Stop collecting predictions
     if (frameIntervalRef.current) {
-      console.log('🧹 Stopping frame interval');
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
     }
     
-    // Send stop message first
-    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-      console.log('📤 Sending stop message');
+    // Close WebSocket
+    if (wsConnection) {
       wsConnection.send(JSON.stringify({ type: 'stop' }));
-      
-      // Wait longer for all frames to be processed
-      setTimeout(() => {
-        if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-          console.log('📤 Sending analyze message for target word:', targetWord);
-          wsConnection.send(JSON.stringify({ 
-            type: 'analyze', 
-            target_word: targetWord 
-          }));
-        } else {
-          console.log('❌ WebSocket connection lost before analyze');
-          setIsAnalyzing(false);
-          showNotification('error', 'Connection lost before analysis could complete');
-        }
-      }, 1000); // Increased delay to 1 second
-    } else {
-      console.log('❌ No WebSocket connection available for stopping');
-      setIsAnalyzing(false);
-      showNotification('error', 'No active connection to stop');
+      wsConnection.close();
+      setWsConnection(null);
     }
     
-    // Don't close WebSocket immediately - wait for final result
+    // Analyze collected predictions
+    if (collectedPredictions.length > 0) {
+      const finalPrediction = analyzePredictions(collectedPredictions);
+      handlePredictionResult(finalPrediction);
+    } else {
+      showNotification('error', 'No predictions collected. Please try again.');
+    }
+    
+    setIsAnalyzing(false);
     setCollectedPredictions([]);
-  }, [isGestureActive, wsConnection, targetWord]);
+  }, [isGestureActive, wsConnection, collectedPredictions, showNotification]);
+
+  // Memoized predictions analysis function
+  const analyzePredictions = useCallback((predictions: Prediction[][]): PredictionResult => {
+    // Aggregate all predictions
+    const wordCounts: { [word: string]: { total: number, confidence: number } } = {};
+    
+    predictions.forEach(predictionSet => {
+      predictionSet.forEach(pred => {
+        if (!wordCounts[pred.word]) {
+          wordCounts[pred.word] = { total: 0, confidence: 0 };
+        }
+        wordCounts[pred.word].total += 1;
+        wordCounts[pred.word].confidence += pred.confidence;
+      });
+    });
+    
+    // Calculate average confidence and sort by frequency
+    const aggregatedPredictions: Prediction[] = Object.entries(wordCounts)
+      .map(([word, data]) => ({
+        word,
+        confidence: data.confidence / data.total,
+        rank: 0
+      }))
+      .sort((a, b) => {
+        // Sort by frequency first, then by confidence
+        const freqA = wordCounts[a.word].total;
+        const freqB = wordCounts[b.word].total;
+        if (freqA !== freqB) return freqB - freqA;
+        return b.confidence - a.confidence;
+      })
+      .slice(0, 4)
+      .map((pred, index) => ({ ...pred, rank: index + 1 }));
+    
+    // Check if target word matches exactly
+    const isMatch = aggregatedPredictions.some(pred => pred.word.toLowerCase() === targetWord.toLowerCase());
+    
+    // Check if target word is in top 4 (enhanced logic for user progress)
+    const isTop4Correct = aggregatedPredictions.slice(0, 4).some(pred => pred.word.toLowerCase() === targetWord.toLowerCase());
+    
+    const matchConfidence = aggregatedPredictions.find(pred => pred.word.toLowerCase() === targetWord.toLowerCase())?.confidence || 0;
+    
+    return {
+      target_word: targetWord,
+      predictions: aggregatedPredictions,
+      top_predictions: aggregatedPredictions.slice(0, 2),
+      is_match: isMatch,
+      is_top_4_correct: isTop4Correct,
+      match_confidence: matchConfidence,
+      model_used: selectedModel
+    };
+  }, [targetWord, selectedModel]);
+
+  // Optimized frame capture function
+  const captureAndCollectPrediction = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current || !wsConnection) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) return;
+
+    // Set canvas size to match video
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    
+    // Draw current frame to canvas
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Convert canvas to base64
+    const frameData = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+    
+    // Send frame via WebSocket for prediction
+    if (wsConnection.readyState === WebSocket.OPEN) {
+      wsConnection.send(JSON.stringify({
+        type: 'frame',
+        frame: frameData,
+        target_word: targetWord,
+        model_type: selectedModel
+      }));
+    }
+  }, [wsConnection, targetWord, selectedModel]);
 
   // Memoized backend connection check
   const checkBackendConnection = useCallback(async () => {
@@ -647,7 +449,6 @@ const Practice: React.FC = () => {
     }
   }, [baseUrl]);
 
-  // RESTORED - Original camera function
   const startCamera = async () => {
     setIsCameraLoading(true);
     try {
@@ -658,82 +459,13 @@ const Practice: React.FC = () => {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 1920, min: 1280 },  // Prefer 1080p, minimum 720p
-          height: { ideal: 1080, min: 720 },  // Prefer 1080p, minimum 720p
-          facingMode: 'user',
-          frameRate: { ideal: 30, min: 15 }   // Higher frame rate for better quality
-        },
+        video: { width: 640, height: 480 },
         audio: false 
       });
       
       setCameraStream(stream);
       if (videoRef.current) {
-        const video = videoRef.current;
-        video.srcObject = stream;
-        console.log('📺 Video element stream set');
-        
-        // Create promise to wait for video to be ready
-        const waitForVideoReady = new Promise<void>((resolve) => {
-          const checkReady = () => {
-            if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 3) {
-              const resolution = `${video.videoWidth}x${video.videoHeight}`;
-              const qualityTier = video.videoWidth >= 1920 ? '🎯 1080p' : 
-                                 video.videoWidth >= 1280 ? '📺 720p' : 
-                                 video.videoWidth >= 640 ? '📹 480p' : '📱 Low-res';
-              console.log(`✅ Video fully ready: ${resolution} ${qualityTier}`);
-              
-              // Log the actual video track settings
-              const videoTrack = stream.getVideoTracks()[0];
-              if (videoTrack) {
-                const settings = videoTrack.getSettings();
-                console.log('🔧 Camera settings achieved:', {
-                  width: settings.width,
-                  height: settings.height,
-                  frameRate: settings.frameRate,
-                  aspectRatio: settings.aspectRatio
-                });
-              }
-              
-              resolve();
-            } else {
-              console.log('⏳ Video not ready yet:', {
-                videoWidth: video.videoWidth,
-                videoHeight: video.videoHeight,
-                readyState: video.readyState
-              });
-              setTimeout(checkReady, 100);
-            }
-          };
-          checkReady();
-        });
-        
-        // Add event listeners for video events
-        video.addEventListener('loadedmetadata', () => {
-          console.log('📹 Video metadata loaded:', {
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
-            duration: video.duration
-          });
-        });
-        
-        video.addEventListener('canplay', () => {
-          console.log('🎬 Video can play');
-        });
-        
-        video.addEventListener('loadeddata', () => {
-          console.log('📊 Video data loaded');
-        });
-        
-        // Try to play the video
-        video.play().then(() => {
-          console.log('🎬 Video started playing');
-          return waitForVideoReady;
-        }).then(() => {
-          console.log('🎯 Video is fully ready for capture!');
-        }).catch(error => {
-          console.log('❌ Error with video:', error);
-        });
+        videoRef.current.srcObject = stream;
       }
       setIsRecording(true);
       showNotification('success', 'Camera started successfully!');
@@ -782,367 +514,6 @@ const Practice: React.FC = () => {
     }
   };
 
-  // NEW - File streaming test function
-  const startFileFrameStreaming = async (video: HTMLVideoElement) => {
-    try {
-      console.log('🎬 Starting file frame streaming via WebSocket...');
-      
-      // Initialize WebSocket connection like camera streaming
-      let currentWs: WebSocket;
-      
-      if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-        console.log('🔗 Creating new WebSocket connection for file streaming');
-        setConnectionStatus('connecting');
-        
-        // Create WebSocket and wait for connection
-        const ws = new WebSocket(`${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
-        
-        // Wait for WebSocket to connect
-        await new Promise<void>((resolve, reject) => {
-          ws.onopen = () => {
-            console.log('✅ WebSocket connected for file streaming');
-            setConnectionStatus('connected');
-            setWsConnection(ws);
-            resolve();
-          };
-          
-          ws.onerror = (error) => {
-            console.error('❌ WebSocket connection failed:', error);
-            reject(new Error('WebSocket connection failed'));
-          };
-          
-          // Set up message handlers
-          ws.onmessage = (event) => {
-            try {
-              const data: LivePredictionMessage = JSON.parse(event.data);
-              console.log('File streaming WebSocket message:', data);
-              
-              switch (data.type) {
-                case 'connected':
-                  console.log('File streaming WebSocket connected:', data.message);
-                  break;
-                  
-                case 'frame_received':
-                  console.log(`File frame ${data.frame_count} processed`);
-                  break;
-                  
-                case 'progress':
-                  console.log(`File streaming progress: ${data.frames_processed} frames processed`);
-                  if (data.latest_predictions) {
-                    setLivePredictions(data.latest_predictions);
-                  }
-                  break;
-                  
-                case 'final_result':
-                  console.log('File streaming final result:', data.result);
-                  setIsAnalyzing(false);
-                  setIsFileStreaming(false);
-                  if (data.result) {
-                    handlePredictionResult(data.result);
-                  }
-                  break;
-                  
-                case 'stopped':
-                  console.log('File streaming stopped:', data.message);
-                  setIsFileStreamingReady(true);
-                  showNotification('success', 'Video frames processed! Ready to analyze.');
-                  break;
-                  
-                case 'error':
-                  console.error('File streaming WebSocket error:', data.message);
-                  setIsAnalyzing(false);
-                  setIsFileStreaming(false);
-                  setIsFileStreamingReady(false);
-                  showNotification('error', data.message || 'File streaming error');
-                  break;
-              }
-            } catch (error) {
-              console.error('Error parsing WebSocket message:', error);
-            }
-          };
-          
-          ws.onclose = () => {
-            console.log('File streaming WebSocket closed');
-            setConnectionStatus('disconnected');
-            setWsConnection(null);
-          };
-        });
-        
-        currentWs = ws;
-      } else {
-        currentWs = wsConnection;
-      }
-      
-      // Now WebSocket is connected, start streaming frames
-      console.log('🎬 WebSocket ready, starting frame streaming...');
-      showNotification('info', 'WebSocket connected! Starting frame capture...');
-      
-      // Create canvas for frame extraction
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Could not get canvas context');
-      }
-      
-      // Ensure video has valid dimensions
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-        throw new Error(`Invalid video dimensions: ${video.videoWidth}x${video.videoHeight}`);
-      }
-      
-      // Set canvas dimensions to match video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      console.log(`📐 Canvas setup: ${canvas.width}x${canvas.height} (video: ${video.videoWidth}x${video.videoHeight})`);
-      
-      // Test canvas drawing capability
-      ctx.fillStyle = 'red';
-      ctx.fillRect(0, 0, 10, 10);
-      const testData = canvas.toDataURL('image/jpeg', 0.95);  // High quality for better predictions
-      console.log(`🧪 Canvas test successful, test image size: ${testData.length} bytes`);
-      
-      // Stream frames with natural frame extraction at 25 FPS (like upload method)
-      // No artificial frame count - let the video determine its natural duration
-      let frameCount = 0;
-      let isStreaming = true;
-      
-      // Use consistent 45 FPS for ultra-high quality ASL recognition
-      const targetFPS = 45; // Ultra-high FPS for ASL gesture videos
-      const frameInterval = Math.max(22.22, 1000 / targetFPS); // At least 22.22ms between frames, target 22.22ms for 45 FPS
-      
-      // Pre-load video for better frame extraction
-      video.preload = 'auto';
-      video.load(); // Force reload to ensure all metadata is available
-      
-      // Wait a bit for video to be fully loaded before starting
-      await new Promise(resolve => {
-        if (video.readyState >= 2) {
-          resolve(undefined);
-        } else {
-          video.addEventListener('loadeddata', () => resolve(undefined), { once: true });
-        }
-      });
-      
-      console.log(`🎬 Video fully loaded - readyState: ${video.readyState}, duration: ${video.duration}s, dimensions: ${video.videoWidth}x${video.videoHeight}`);
-      console.log(`🎬 Starting natural frame streaming: video duration=${video.duration.toFixed(3)}s, interval=${frameInterval.toFixed(1)}ms`);
-      
-      const streamFrames = () => {
-        console.log(`🔍 streamFrames called - frameCount: ${frameCount}, isStreaming: ${isStreaming}, currentWs state: ${currentWs?.readyState}, video: paused=${video.paused}, ended=${video.ended}, currentTime=${video.currentTime.toFixed(3)}s, duration=${video.duration.toFixed(3)}s`);
-        
-        if (!isStreaming || !currentWs || currentWs.readyState !== WebSocket.OPEN) {
-          console.log('🛑 Stopping file frame streaming - conditions not met');
-          return;
-        }
-        
-        try {
-          // Natural frame capture - let video play at its natural pace
-          const canCaptureFrame = video.readyState >= 2 && !video.ended;
-          
-          if (canCaptureFrame) {
-            // Capture frame from current video position (natural timing)
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to base64
-            const frameData = canvas.toDataURL('image/jpeg', 0.95);  // High quality for better predictions
-            frameCount++;
-            
-            console.log(`📸 Sending file frame ${frameCount} (${frameData.length} bytes) at time ${video.currentTime.toFixed(3)}s`);
-            
-            // Send frame through WebSocket
-            currentWs.send(JSON.stringify({
-              type: 'frame',
-              frame: frameData
-            }));
-          } else {
-            console.log(`⏭️ Skipping frame capture - readyState: ${video.readyState}, ended: ${video.ended}`);
-          }
-          
-          // Continue streaming until video ends (natural duration)
-          const shouldContinue = isStreaming && !video.ended;
-          
-          if (shouldContinue) {
-            // Advance video time at 45 FPS
-            video.currentTime = Math.min(video.currentTime + (1/targetFPS), video.duration - 0.01);
-            setTimeout(streamFrames, frameInterval);
-          } else {
-            console.log(`🏁 Natural frame streaming completed - frameCount: ${frameCount}`);
-            console.log(`📊 Natural capture complete: ${frameCount} frames from ${video.duration.toFixed(2)}s video`);
-            
-            // Natural timing achieved - no artificial constraints
-            isStreaming = false;
-            setIsRecording(false);
-            setIsFileStreamingReady(true);
-            console.log(`✅ Natural frame count achieved: ${frameCount} frames (matches upload method)`);
-            
-            // Send stop signal to backend
-            currentWs.send(JSON.stringify({ type: 'stop' }));
-            showNotification('success', 'Video streaming complete! Click Analyze to get results.');
-          }
-          
-        } catch (error) {
-          console.error('❌ Error streaming frame:', error);
-        }
-      };
-      
-      // Start video playback and frame streaming
-      video.currentTime = 0;
-      console.log('🎬 Starting video playback...');
-      
-      try {
-        await video.play();
-        console.log('✅ Video playback started successfully');
-        console.log(`📹 Video initial state: paused=${video.paused}, ended=${video.ended}, currentTime=${video.currentTime}, duration=${video.duration}, readyState=${video.readyState}`);
-        
-        // Start frame streaming immediately
-        console.log('🎯 Starting frame streaming loop...');
-        streamFrames();
-        
-        // Also set up a comprehensive monitoring system
-        let monitoringInterval: number;
-        
-        const startMonitoring = () => {
-          monitoringInterval = setInterval(() => {
-            const progress = (video.currentTime / video.duration * 100).toFixed(1);
-            console.log(`🔍 Monitoring: frameCount=${frameCount}, time=${video.currentTime.toFixed(3)}s/${video.duration.toFixed(3)}s (${progress}%), paused=${video.paused}, ended=${video.ended}, isStreaming=${isStreaming}`);
-            
-            // If video has ended, complete the capture
-            if ((video.ended || video.currentTime >= video.duration) && isStreaming) {
-              console.log(`✅ Video ended naturally with ${frameCount} frames captured`);
-              isStreaming = false;
-              if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-                currentWs.send(JSON.stringify({ type: 'stop' }));
-              }
-              clearInterval(monitoringInterval);
-            }
-            
-            // Stop monitoring when complete
-            if (!isStreaming) {
-              console.log('🛑 Clearing monitoring interval');
-              clearInterval(monitoringInterval);
-            }
-          }, 200); // Check every 200ms for responsive monitoring
-        };
-        
-        startMonitoring();
-        
-        // No backup frame capture needed - 100% efficiency achieved with perfect timing
-        
-      } catch (playError) {
-        console.error('❌ Error starting video playback:', playError);
-        showNotification('error', 'Failed to start video playback');
-        throw playError;
-      }
-      
-    } catch (error: any) {
-      console.error('❌ File frame streaming error:', error);
-      showNotification('error', `Failed to stream video frames: ${error.message}`);
-      setIsRecording(false);
-      setIsFileStreaming(false);
-    }
-  };
-
-  // Analyze file streaming results
-  const analyzeFileStreaming = async () => {
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-      showNotification('error', 'WebSocket connection not available');
-      return;
-    }
-    
-    if (!targetWord.trim()) {
-      showNotification('error', 'Please enter a target word');
-      return;
-    }
-    
-    console.log('🔍 Requesting analysis for target word:', targetWord);
-    setIsFileStreamingReady(false);
-    setIsAnalyzing(true);
-    
-    // Send analyze command
-    wsConnection.send(JSON.stringify({
-      type: 'analyze',
-      target_word: targetWord
-    }));
-    
-    showNotification('info', 'Analyzing video predictions...');
-  };
-
-  const startFileStreaming = async () => {
-    console.log('🔧 Starting file streaming test mode...');
-    
-    setIsCameraLoading(true);
-    setIsFileStreamingReady(false);
-    setIsAnalyzing(false);
-    try {
-      // Test mode - no video file required
-      console.log('� File streaming test mode activated');
-      setIsFileStreaming(true);
-      showNotification('success', 'File streaming test mode activated! You can now test the streaming functionality.');
-      
-      // Add file selection capability
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'video/*';
-      
-      input.onchange = async (event) => {
-        const file = (event.target as HTMLInputElement).files?.[0];
-        if (file && videoRef.current) {
-          console.log('📹 Video file selected:', file.name);
-          try {
-            const video = document.createElement('video');
-            video.src = URL.createObjectURL(file);
-            video.muted = true;
-            video.playsInline = true;
-            
-            // Wait for video to load
-            await new Promise<void>((resolve, reject) => {
-              video.addEventListener('loadedmetadata', () => {
-                console.log('📹 File video metadata loaded:', {
-                  videoWidth: video.videoWidth,
-                  videoHeight: video.videoHeight,
-                  duration: video.duration,
-                  readyState: video.readyState,
-                  networkState: video.networkState
-                });
-                resolve();
-              });
-              video.addEventListener('error', (e) => {
-                console.error('❌ Video loading error:', e);
-                reject(e);
-              });
-              video.load();
-            });
-
-            // Set the video for display and streaming
-            videoRef.current.src = video.src;
-            videoRef.current.load();
-            
-            setIsFileStreaming(true);
-            setIsRecording(true); // Start recording mode for file streaming
-            showNotification('success', `Video ${file.name} loaded! Initializing WebSocket...`);
-            
-            // Start streaming frames to backend via WebSocket
-            await startFileFrameStreaming(video);
-            
-          } catch (error: any) {
-            console.error('Error loading video file:', error);
-            showNotification('error', 'Failed to load video file');
-          }
-        } else {
-          setIsFileStreaming(true);
-          showNotification('success', 'File streaming test mode activated!');
-        }
-        setIsCameraLoading(false);
-      };
-      
-      // Auto-trigger file selection
-      setTimeout(() => input.click(), 100);
-    } catch (error: any) {
-      console.error('Error in file streaming test:', error);
-      showNotification('error', 'Failed to activate file streaming test mode');
-    } finally {
-      setIsCameraLoading(false);
-    }
-  };
-
   // Optimized camera stop function
   const stopCamera = useCallback(() => {
     if (cameraStream) {
@@ -1153,6 +524,49 @@ const Practice: React.FC = () => {
     setSessionTime(0);
     stopLivePrediction();
   }, [cameraStream]);
+
+  const connectWebSocket = useCallback(() => {
+    if (wsConnection || connectionStatus === 'connecting') return;
+
+    setConnectionStatus('connecting');
+    const ws = new WebSocket(`${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected for live prediction');
+      setConnectionStatus('connected');
+      setWsConnection(ws);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data: LivePredictionMessage = JSON.parse(event.data);
+        if (data.type === 'predictions' && data.predictions) {
+          setLivePredictions(data.predictions);
+          
+          // If gesture is active, collect predictions for analysis
+          if (isGestureActive) {
+            setCollectedPredictions(prev => [...prev, data.predictions!]);
+          }
+        } else if (data.type === 'error') {
+          console.error('WebSocket error:', data.message);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setConnectionStatus('disconnected');
+      setWsConnection(null);
+      setIsLivePredicting(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setConnectionStatus('disconnected');
+    };
+  }, [wsUrl, selectedModel, wsConnection, connectionStatus]);
 
   // Optimized live prediction stop function  
   const stopLivePrediction = useCallback(() => {
@@ -1169,278 +583,6 @@ const Practice: React.FC = () => {
     setConnectionStatus('disconnected');
     setLivePredictions(null);
   }, [wsConnection]);
-
-  // Debug function to check video state
-  const debugVideoState = useCallback(() => {
-    if (videoRef.current) {
-      const video = videoRef.current;
-      console.log('🔍 Manual video debug:', {
-        srcObject: !!video.srcObject,
-        videoWidth: video.videoWidth,
-        videoHeight: video.videoHeight,
-        paused: video.paused,
-        readyState: video.readyState,
-        currentTime: video.currentTime,
-        style: video.style.display,
-        isRecording: isRecording,
-        streamActive: cameraStream?.active
-      });
-      
-      // Try to force play if paused
-      if (video.paused && video.srcObject) {
-        video.play().then(() => {
-          console.log('✅ Forced video to play');
-        }).catch(err => {
-          console.log('❌ Could not force play:', err);
-        });
-      }
-    }
-  }, [isRecording, cameraStream]);
-
-  // Simple frame capture functions (like CameraTest)
-  const startCapturing = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) {
-      showNotification('error', 'Please ensure camera is active');
-      return;
-    }
-
-    setIsCapturing(true);
-    setCapturedFrames([]);
-    setCapturedFrameCount(0);
-
-    console.log('🎬 Starting simple frame capture interval');
-    
-    // Clear any existing interval
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-    }
-
-    let currentFrameCount = 0;
-    frameIntervalRef.current = window.setInterval(() => {
-      const frameData = captureFrame();
-      
-      if (frameData) {
-        currentFrameCount++;
-        setCapturedFrameCount(currentFrameCount);
-        setCapturedFrames(prev => [...prev, frameData]);
-        console.log(`📤 Frame ${currentFrameCount} captured, size: ${Math.round(frameData.length / 1024)}KB`);
-        
-        // Step 3: Also send to WebSocket if connected
-        if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-          try {
-            wsConnection.send(JSON.stringify({
-              type: 'frame',
-              frame: frameData
-            }));
-            console.log(`🌐 Frame ${currentFrameCount} sent to WebSocket`);
-          } catch (error) {
-            console.error('❌ Error sending frame to WebSocket:', error);
-          }
-        }
-      }
-    }, captureInterval);
-
-    const message = wsConnection && wsConnection.readyState === WebSocket.OPEN 
-      ? 'Frame capture + WebSocket sending started!' 
-      : 'Frame capture started! Connect WebSocket to also send frames.';
-    showNotification('info', message);
-  }, [captureFrame, captureInterval, showNotification, wsConnection]);
-
-  const stopCapturing = useCallback(() => {
-    setIsCapturing(false);
-    
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
-    }
-
-    console.log(`✅ Frame capture stopped! Captured ${capturedFrames.length} frames.`);
-    showNotification('success', `Frame capture stopped! Captured ${capturedFrames.length} frames.`);
-  }, [capturedFrames.length, showNotification]);
-
-  const clearFrames = useCallback(() => {
-    setCapturedFrames([]);
-    setCapturedFrameCount(0);
-    showNotification('info', 'All captured frames cleared');
-  }, [showNotification]);
-
-  // Step 1: Basic WebSocket connection function
-  const connectWebSocket = useCallback(() => {
-    console.log('🔗 Step 1: Connecting to WebSocket...');
-    
-    if (wsConnection) {
-      console.log('🧹 Closing existing WebSocket connection');
-      wsConnection.close();
-      setWsConnection(null);
-    }
-    
-    setConnectionStatus('connecting');
-    const ws = new WebSocket(`${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
-    
-    ws.onopen = () => {
-      console.log('✅ Step 1: WebSocket connected successfully!');
-      setConnectionStatus('connected');
-      setWsConnection(ws);
-      showNotification('success', 'WebSocket connected! Ready for frame sending.');
-    };
-    
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('📨 Step 4: WebSocket message received:', data);
-        
-        // Handle different message types from backend
-        switch (data.type) {
-          case 'connected':
-            console.log('🔗 Backend confirmed connection:', data.message);
-            break;
-            
-          case 'frame_received':
-            console.log(`✅ Backend received frame ${data.frame_count || 'unknown'}`);
-            break;
-            
-          case 'progress':
-            console.log(`📊 Backend progress: ${data.frames_processed || 0} frames processed`);
-            if (data.latest_predictions) {
-              console.log('🔮 Latest predictions:', data.latest_predictions);
-            }
-            break;
-            
-          case 'final_result':
-            console.log('🎯 Final result received:', data.result);
-            if (data.result) {
-              showNotification('success', `Prediction complete! Top result: ${data.result.predictions[0]?.word || 'Unknown'}`);
-            }
-            break;
-            
-          case 'error':
-            console.error('❌ Backend error:', data.message);
-            showNotification('error', data.message || 'Backend error occurred');
-            break;
-            
-          default:
-            console.log('📝 Other message type:', data.type, data);
-        }
-      } catch (error) {
-        console.error('❌ Error parsing WebSocket message:', error);
-      }
-    };
-    
-    ws.onclose = () => {
-      console.log('🔌 WebSocket disconnected');
-      setConnectionStatus('disconnected');
-      setWsConnection(null);
-    };
-    
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-      setConnectionStatus('disconnected');
-      showNotification('error', 'WebSocket connection failed. Check if backend is running.');
-    };
-  }, [wsUrl, selectedModel, wsConnection, showNotification]);
-
-  // Step 2: Send single frame to WebSocket
-  const sendFrameToWebSocket = useCallback(() => {
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-      showNotification('error', 'WebSocket not connected. Please connect first.');
-      return;
-    }
-    
-    console.log('📤 Step 2: Sending single frame to WebSocket...');
-    
-    const frameData = captureFrame();
-    if (!frameData) {
-      showNotification('error', 'Failed to capture frame. Check camera state.');
-      return;
-    }
-    
-    try {
-      wsConnection.send(JSON.stringify({
-        type: 'frame',
-        frame: frameData
-      }));
-      
-      console.log('✅ Step 2: Frame sent successfully!', {
-        frameSize: Math.round(frameData.length / 1024) + 'KB'
-      });
-      showNotification('success', `Frame sent! Size: ${Math.round(frameData.length / 1024)}KB`);
-    } catch (error) {
-      console.error('❌ Error sending frame:', error);
-      showNotification('error', 'Failed to send frame to WebSocket');
-    }
-  }, [wsConnection, captureFrame, showNotification]);
-
-  // Step 5: Send analyze command to WebSocket
-  const analyzeFrames = useCallback(() => {
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-      showNotification('error', 'WebSocket not connected.');
-      return;
-    }
-    
-    if (!targetWord) {
-      showNotification('error', 'Please select a target word for analysis.');
-      return;
-    }
-    
-    console.log('🔍 Step 5: Sending analyze command...');
-    
-    try {
-      // First send stop command
-      wsConnection.send(JSON.stringify({ type: 'stop' }));
-      
-      // Then send analyze command
-      setTimeout(() => {
-        wsConnection.send(JSON.stringify({ 
-          type: 'analyze', 
-          target_word: targetWord 
-        }));
-        
-        console.log('✅ Step 5: Analyze command sent for word:', targetWord);
-        showNotification('info', `Analyzing frames for word: ${targetWord}`);
-      }, 500);
-      
-    } catch (error) {
-      console.error('❌ Error sending analyze command:', error);
-      showNotification('error', 'Failed to send analyze command');
-    }
-  }, [wsConnection, targetWord, showNotification]);
-
-  // Test frame capture function (like CameraTest)
-  const testFrameCapture = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) {
-      console.log('❌ Missing video or canvas ref for test');
-      showNotification('error', 'Camera not ready for test capture');
-      return;
-    }
-
-    const video = videoRef.current;
-    console.log('🧪 Testing frame capture...');
-    console.log('🔍 Video state before test:', {
-      isRecording: isRecording,
-      videoWidth: video.videoWidth,
-      videoHeight: video.videoHeight,
-      readyState: video.readyState,
-      paused: video.paused,
-      currentTime: video.currentTime,
-      srcObject: !!video.srcObject,
-      display: video.style.display,
-      visibility: getComputedStyle(video).visibility,
-      cameraStreamActive: cameraStream?.active
-    });
-    
-    const frameDataUrl = captureFrame();
-    
-    if (frameDataUrl) {
-      console.log('✅ Test capture successful!', {
-        frameSize: Math.round(frameDataUrl.length / 1024) + 'KB',
-        dataUrlLength: frameDataUrl.length
-      });
-      showNotification('success', `Test capture successful! Frame size: ${Math.round(frameDataUrl.length / 1024)}KB`);
-    } else {
-      console.log('❌ Test capture failed');
-      showNotification('error', 'Test capture failed - check video state');
-    }
-  }, [captureFrame, showNotification, isRecording, cameraStream]);
 
   // Optimized video capture and prediction function
   const captureAndPredict = useCallback(async () => {
@@ -1460,13 +602,13 @@ const Practice: React.FC = () => {
       
       if (!ctx) throw new Error('Cannot get canvas context');
 
-      canvas.width = video.videoWidth || 640;   // Match original to_4.mp4 exactly  
-      canvas.height = video.videoHeight || 480; // Match original to_4.mp4 exactly
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
 
       // Capture 10 frames over 2 seconds
       for (let i = 0; i < 10; i++) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const frameData = canvas.toDataURL('image/jpeg', 0.95);  // High quality for better predictions
+        const frameData = canvas.toDataURL('image/jpeg', 0.8);
         frames.push(frameData.split(',')[1]);
         await new Promise(resolve => setTimeout(resolve, 200));
       }
@@ -1548,14 +690,6 @@ const Practice: React.FC = () => {
   // Optimized prediction result handler with user tracking
   const handlePredictionResult = useCallback(async (result: PredictionResult) => {
     setPredictionResult(result);
-    setIsAnalyzing(false);
-    
-    // Close WebSocket connection after getting result
-    if (wsConnection) {
-      wsConnection.close();
-      setWsConnection(null);
-      setConnectionStatus('disconnected');
-    }
     
     // Submit to backend for user tracking if authenticated
     if (user && token) {
@@ -1607,7 +741,7 @@ const Practice: React.FC = () => {
     setPracticeHistory(prev => [historyEntry, ...prev.slice(0, 9)]); // Keep last 10 entries
     
     // User progress is now updated via fetchUserProgress() after backend tracking
-  }, [user, token, baseUrl, fetchUserProgress, wsConnection, practiceMode, makeAuthenticatedRequest]);
+  }, [user, token, baseUrl, fetchUserProgress]);
 
   // Optimized results clearing function
   const clearResults = useCallback(() => {
@@ -2033,15 +1167,15 @@ const Practice: React.FC = () => {
                 <div className="flex items-start space-x-2">
                   <div className="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center text-xs font-bold">2</div>
                   <div>
-                    <div className="font-semibold text-green-800">Start Gesture (Natural Duration)</div>
-                    <div className="text-green-700">Perform your sign naturally - duration will vary by gesture</div>
+                    <div className="font-semibold text-green-800">Start Gesture</div>
+                    <div className="text-green-700">Click "Start Gesture" and perform your sign</div>
                   </div>
                 </div>
                 <div className="flex items-start space-x-2">
                   <div className="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center text-xs font-bold">3</div>
                   <div>
                     <div className="font-semibold text-purple-800">End & Analyze</div>
-                    <div className="text-purple-700">Click "End Gesture" to get results</div>
+                    <div className="text-purple-700">Click "End Gesture" to get combined results</div>
                   </div>
                 </div>
               </div>
@@ -2054,46 +1188,36 @@ const Practice: React.FC = () => {
                     ref={videoRef}
                     autoPlay
                     muted
-                    playsInline
-                    controls={false}
-                    style={{ display: isRecording ? 'block' : 'none' }}
-                    className="w-full h-full object-cover rounded-lg"
+                    className={`w-full h-full object-cover rounded-lg ${isRecording ? 'block' : 'hidden'}`}
                   />
                   <canvas ref={canvasRef} className="hidden" />
                   
                   {!isRecording && (
                     <div className="text-center text-white z-10">
-                      <Video className="h-24 w-24 mx-auto mb-4 opacity-80 text-blue-400" />
-                      <p className="text-lg font-medium">Dual Mode Practice</p>
-                      <p className="text-sm opacity-75 mt-2">Choose Camera Streaming or File Upload Test</p>
-                      <div className="mt-4 space-y-2">
-                        <p className="text-sm text-green-300">✅ Camera Streaming: Real-time gesture recognition</p>
-                        <p className="text-sm text-blue-300">🔧 File Streaming: Upload video for testing</p>
-                        {!uploadedVideo && (
-                          <p className="text-sm text-yellow-300">⚠️ Upload a video file to enable file streaming test</p>
-                        )}
-                        {uploadedVideo && !targetWord && (
-                          <p className="text-sm text-orange-300">💡 Select a target word for better analysis (optional for testing)</p>
-                        )}
-                      </div>
+                      <Camera className="h-24 w-24 mx-auto mb-4 opacity-80 text-blue-400" />
+                      <p className="text-lg font-medium">Camera Ready</p>
+                      <p className="text-sm opacity-75 mt-2">Click start to begin practice</p>
                     </div>
                   )}
 
                   {isRecording && (
                     <div className="absolute top-4 right-4 flex items-center space-x-2 bg-red-500/20 backdrop-blur-sm rounded-lg px-3 py-2">
                       <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-white">
-                        {cameraStream ? 'Camera Live' : 'File Test'} - {formatTime(sessionTime)}
-                      </span>
+                      <span className="text-sm font-medium text-white">Recording - {formatTime(sessionTime)}</span>
                     </div>
                   )}
 
-                  {isCapturing && (
+                  {isGestureActive && (
                     <div className="absolute top-4 left-4 flex items-center space-x-2 bg-green-500/20 backdrop-blur-sm rounded-lg px-3 py-2">
-                      <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-white">
-                        Capturing: {capturedFrameCount} frames
-                      </span>
+                      <Target className="h-4 w-4 text-green-400 animate-pulse" />
+                      <span className="text-sm font-medium text-white">Gesture Active - Collecting Data</span>
+                    </div>
+                  )}
+
+                  {isAnalyzing && (
+                    <div className="absolute top-16 left-4 flex items-center space-x-2 bg-blue-500/20 backdrop-blur-sm rounded-lg px-3 py-2">
+                      <RefreshCw className="h-4 w-4 text-blue-400 animate-spin" />
+                      <span className="text-sm font-medium text-white">Analyzing {collectedPredictions.length} predictions</span>
                     </div>
                   )}
 
@@ -2108,128 +1232,55 @@ const Practice: React.FC = () => {
                 </div>
 
                 <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50">
-                  <div className="flex flex-col items-center space-y-4">
-                    {/* Dual Mode Buttons */}
+                  <div className="flex items-center justify-center space-x-4">
                     {!isRecording ? (
-                      <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4 w-full">
-                        {/* Camera Streaming Button */}
-                        <button
-                          onClick={startCamera}
-                          disabled={!targetWord || isCameraLoading}
-                          className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none w-full sm:w-auto"
-                        >
-                          {isCameraLoading ? (
-                            <RefreshCw className="h-5 w-5 animate-spin" />
-                          ) : (
-                            <Video className="h-5 w-5" />
-                          )}
-                          <span>{isCameraLoading ? 'Loading Camera...' : 'Start Camera Streaming'}</span>
-                        </button>
-                        
-                        {/* File Streaming Test Button */}
-                        <button
-                          onClick={startFileStreaming}
-                          disabled={false}
-                          className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none w-full sm:w-auto"
-                          title="Test file streaming functionality"
-                        >
-                          <Upload className="h-5 w-5" />
-                          <span>Test File Streaming</span>
-                        </button>
-                        
-                        {/* Analyze Video Button - appears when file streaming is ready */}
-                        {isFileStreamingReady && (
-                          <button
-                            onClick={analyzeFileStreaming}
-                            disabled={isAnalyzing}
-                            className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none w-full sm:w-auto"
-                            title="Analyze the uploaded video frames"
-                          >
-                            {isAnalyzing ? (
-                              <RefreshCw className="h-5 w-5 animate-spin" />
-                            ) : (
-                              <Target className="h-5 w-5" />
-                            )}
-                            <span>{isAnalyzing ? 'Analyzing...' : 'Analyze Video'}</span>
-                          </button>
+                      <button
+                        onClick={startCamera}
+                        disabled={!targetWord || isCameraLoading}
+                        className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                      >
+                        {isCameraLoading ? (
+                          <RefreshCw className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Camera className="h-5 w-5" />
                         )}
-                        
-                        {/* Debug Info */}
-                        <div className="text-xs text-gray-500 mt-2">
-                          Debug: uploadedVideo={uploadedVideo ? 'YES' : 'NO'}; isCameraLoading={isCameraLoading ? 'YES' : 'NO'}; disabled={(!uploadedVideo || isCameraLoading) ? 'YES' : 'NO'}
-                        </div>
-                      </div>
+                        <span>{isCameraLoading ? 'Starting Camera...' : 'Start Camera'}</span>
+                      </button>
                     ) : (
                       <>
-                        {!isCapturing ? (
+                        {!isGestureActive && !isAnalyzing ? (
                           <>
                             <button
-                              onClick={startCapturing}
-                              className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+                              onClick={startGesture}
+                              disabled={!targetWord}
+                              className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50"
                             >
                               <Target className="h-5 w-5" />
-                              <span>Start Capturing</span>
+                              <span>Start Gesture</span>
                             </button>
                             
                             <button
-                              onClick={testFrameCapture}
-                              className="flex items-center space-x-3 px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+                              onClick={captureAndPredict}
+                              disabled={isProcessing || !targetWord}
+                              className="flex items-center space-x-3 px-6 py-4 bg-gradient-to-r from-yellow-600 to-orange-600 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50"
                             >
                               <Camera className="h-5 w-5" />
-                              <span>Test Single Frame</span>
+                              <span>Quick Capture</span>
                             </button>
-                            
-                            <button
-                              onClick={connectWebSocket}
-                              disabled={connectionStatus === 'connecting'}
-                              className={`flex items-center space-x-3 px-6 py-4 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 ${
-                                connectionStatus === 'connected' 
-                                  ? 'bg-gradient-to-r from-green-500 to-green-600' 
-                                  : 'bg-gradient-to-r from-purple-600 to-purple-700'
-                              }`}
-                            >
-                              {connectionStatus === 'connecting' ? (
-                                <RefreshCw className="h-5 w-5 animate-spin" />
-                              ) : connectionStatus === 'connected' ? (
-                                <Wifi className="h-5 w-5" />
-                              ) : (
-                                <Wifi className="h-5 w-5" />
-                              )}
-                              <span>
-                                {connectionStatus === 'connecting' ? 'Connecting...' : 
-                                 connectionStatus === 'connected' ? 'Connected' : 'Connect WebSocket'}
-                              </span>
-                            </button>
-                            
-                            {connectionStatus === 'connected' && (
-                              <>
-                                <button
-                                  onClick={sendFrameToWebSocket}
-                                  className="flex items-center space-x-3 px-6 py-4 bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
-                                >
-                                  <Upload className="h-5 w-5" />
-                                  <span>Send Frame</span>
-                                </button>
-                                
-                                <button
-                                  onClick={analyzeFrames}
-                                  disabled={!targetWord || capturedFrameCount === 0}
-                                  className="flex items-center space-x-3 px-6 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50"
-                                >
-                                  <Target className="h-5 w-5" />
-                                  <span>Analyze Frames</span>
-                                </button>
-                              </>
-                            )}
                           </>
-                        ) : (
+                        ) : isGestureActive ? (
                           <button
-                            onClick={stopCapturing}
+                            onClick={endGesture}
                             className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-xl font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl animate-pulse"
                           >
                             <CheckCircle className="h-5 w-5" />
-                            <span>Capturing ({capturedFrameCount} frames)</span>
+                            <span>End Gesture & Analyze</span>
                           </button>
+                        ) : (
+                          <div className="flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium">
+                            <RefreshCw className="h-5 w-5 animate-spin" />
+                            <span>Analyzing Gesture...</span>
+                          </div>
                         )}
                         
                         <button
@@ -2238,23 +1289,6 @@ const Practice: React.FC = () => {
                         >
                           <CameraOff className="h-5 w-5" />
                           <span>Stop Camera</span>
-                        </button>
-                        
-                        {capturedFrames.length > 0 && (
-                          <button
-                            onClick={clearFrames}
-                            className="flex items-center space-x-3 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl text-sm"
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            <span>Clear {capturedFrames.length} Frames</span>
-                          </button>
-                        )}
-                        
-                        <button
-                          onClick={debugVideoState}
-                          className="flex items-center space-x-3 px-4 py-2 bg-yellow-500 text-black rounded-lg font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl text-sm"
-                        >
-                          <span>Debug Video</span>
                         </button>
                       </>
                     )}
@@ -2328,56 +1362,31 @@ const Practice: React.FC = () => {
 
           {/* Right Sidebar */}
           <div className="space-y-6">
-            {/* Frame Capture Display */}
-            {practiceMode === 'camera' && isRecording && (
-              <div className="bg-white rounded-xl shadow-sm p-6 animate-fade-in-up">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Camera className="h-5 w-5 mr-2 text-blue-600" />
-                  Captured Frames
+            {/* Live Predictions Display (for camera mode) */}
+            {practiceMode === 'camera' && isLivePredicting && livePredictions && (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl shadow-sm p-6 animate-fade-in-up border-2 border-green-200">
+                <h3 className="text-lg font-semibold text-green-900 mb-4 flex items-center">
+                  <Wifi className="h-5 w-5 mr-2 text-green-600 animate-pulse" />
+                  Live Predictions
                 </h3>
-                
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-600">{capturedFrames.length}</div>
-                    <div className="text-sm text-gray-500">Total Frames</div>
-                  </div>
-
-                  {isCapturing && (
-                    <div className="flex items-center justify-center space-x-2 p-3 bg-green-50 rounded-lg">
-                      <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-green-700">
-                        Capturing at {(1000 / captureInterval).toFixed(1)} FPS
+                <div className="space-y-2">
+                  {livePredictions.map((prediction, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                          prediction.rank === 1 ? 'bg-yellow-100 text-yellow-800' :
+                          prediction.rank === 2 ? 'bg-gray-100 text-gray-800' :
+                          'bg-orange-100 text-orange-800'
+                        }`}>
+                          {prediction.rank}
+                        </div>
+                        <span className="font-medium">{prediction.word}</span>
+                      </div>
+                      <span className={`text-sm font-medium ${getConfidenceColor(prediction.confidence)}`}>
+                        {(prediction.confidence * 100).toFixed(1)}%
                       </span>
                     </div>
-                  )}
-
-                  {capturedFrames.length > 0 && (
-                    <>
-                      {/* Show last captured frame as preview */}
-                      <div className="border rounded-lg overflow-hidden">
-                        <div className="text-xs text-gray-500 p-2 bg-gray-50">Latest Frame:</div>
-                        <img 
-                          src={capturedFrames[capturedFrames.length - 1]} 
-                          alt="Latest captured frame"
-                          className="w-full h-auto"
-                        />
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={clearFrames}
-                          className="flex items-center justify-center space-x-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                          <span>Clear</span>
-                        </button>
-                        
-                        <div className="text-center text-xs text-gray-500 p-2">
-                          {Math.round(capturedFrames[capturedFrames.length - 1]?.length / 1024) || 0}KB each
-                        </div>
-                      </div>
-                    </>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
