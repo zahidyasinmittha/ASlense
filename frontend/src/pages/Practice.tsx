@@ -925,8 +925,21 @@ const Practice: React.FC = () => {
       console.log(`🎬 Video fully loaded - readyState: ${video.readyState}, duration: ${video.duration}s, dimensions: ${video.videoWidth}x${video.videoHeight}`);
       console.log(`🎬 Starting natural frame streaming: video duration=${video.duration.toFixed(3)}s, interval=${frameInterval.toFixed(1)}ms`);
       
+      // Safety timeout to prevent infinite loops (max 10 seconds regardless of video duration)
+      const maxStreamingTime = Math.max(video.duration * 1000 + 2000, 10000); // Video duration + 2s buffer, min 10s
+      const streamingStartTime = Date.now();
+      
+      console.log(`⏰ Safety timeout set for ${maxStreamingTime}ms to prevent infinite loops`);
+      
       const streamFrames = () => {
         console.log(`🔍 streamFrames called - frameCount: ${frameCount}, isStreaming: ${isStreaming}, currentWs state: ${currentWs?.readyState}, video: paused=${video.paused}, ended=${video.ended}, currentTime=${video.currentTime.toFixed(3)}s, duration=${video.duration.toFixed(3)}s`);
+        
+        // Safety timeout check
+        const elapsed = Date.now() - streamingStartTime;
+        if (elapsed > maxStreamingTime) {
+          console.log(`⏰ SAFETY TIMEOUT: Ending streaming after ${elapsed}ms to prevent infinite loop`);
+          isStreaming = false;
+        }
         
         if (!isStreaming || !currentWs || currentWs.readyState !== WebSocket.OPEN) {
           console.log('🛑 Stopping file frame streaming - conditions not met');
@@ -935,7 +948,10 @@ const Practice: React.FC = () => {
         
         try {
           // Natural frame capture - let video play at its natural pace
-          const canCaptureFrame = video.readyState >= 2 && !video.ended;
+          // Enhanced condition: check for sufficient video data AND proper timing
+          const hasVideoData = video.readyState >= 2;  // HAVE_CURRENT_DATA or better
+          const videoNotAtEnd = !video.ended && video.currentTime < video.duration * 0.99;
+          const canCaptureFrame = hasVideoData && videoNotAtEnd;
           
           if (canCaptureFrame) {
             // Capture frame from current video position (natural timing)
@@ -953,11 +969,22 @@ const Practice: React.FC = () => {
               frame: frameData
             }));
           } else {
-            console.log(`⏭️ Skipping frame capture - readyState: ${video.readyState}, ended: ${video.ended}`);
+            console.log(`⏭️ Skipping frame capture - readyState: ${video.readyState}, ended: ${video.ended}, currentTime: ${video.currentTime.toFixed(3)}s/${video.duration.toFixed(3)}s`);
+            
+            // If we're consistently unable to capture frames, end the streaming
+            if (video.currentTime >= video.duration * 0.98) {
+              console.log(`🏁 Ending due to video being 98%+ complete`);
+              isStreaming = false;
+            }
           }
           
           // Continue streaming until video ends (natural duration)
-          const shouldContinue = isStreaming && !video.ended;
+          // Enhanced end-of-video detection: check multiple conditions
+          const isVideoAtEnd = video.ended || 
+                              (video.currentTime >= video.duration - 0.05) ||  // Within 50ms of end
+                              (video.currentTime >= video.duration * 0.99);     // 99% complete
+          
+          const shouldContinue = isStreaming && !isVideoAtEnd;
           
           if (shouldContinue) {
             // Advance video time at 45 FPS
@@ -965,6 +992,7 @@ const Practice: React.FC = () => {
             setTimeout(streamFrames, frameInterval);
           } else {
             console.log(`🏁 Natural frame streaming completed - frameCount: ${frameCount}`);
+            console.log(`📊 Video end detected: ended=${video.ended}, currentTime=${video.currentTime.toFixed(3)}s, duration=${video.duration.toFixed(3)}s`);
             console.log(`📊 Natural capture complete: ${frameCount} frames from ${video.duration.toFixed(2)}s video`);
             
             // Natural timing achieved - no artificial constraints
@@ -974,7 +1002,9 @@ const Practice: React.FC = () => {
             console.log(`✅ Natural frame count achieved: ${frameCount} frames (matches upload method)`);
             
             // Send stop signal to backend
-            currentWs.send(JSON.stringify({ type: 'stop' }));
+            if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+              currentWs.send(JSON.stringify({ type: 'stop' }));
+            }
             showNotification('success', 'Video streaming complete! Click Analyze to get results.');
           }
           
@@ -1441,53 +1471,6 @@ const Practice: React.FC = () => {
       showNotification('error', 'Test capture failed - check video state');
     }
   }, [captureFrame, showNotification, isRecording, cameraStream]);
-
-  // Optimized video capture and prediction function
-  const captureAndPredict = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || !targetWord) {
-      showNotification('error', 'Please ensure camera is active and target word is selected');
-      return;
-    }
-
-    setIsProcessing(true);
-    
-    try {
-      // Capture multiple frames for better accuracy
-      const frames: string[] = [];
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      const video = videoRef.current;
-      
-      if (!ctx) throw new Error('Cannot get canvas context');
-
-      canvas.width = video.videoWidth || 640;   // Match original to_4.mp4 exactly  
-      canvas.height = video.videoHeight || 480; // Match original to_4.mp4 exactly
-
-      // Capture 10 frames over 2 seconds
-      for (let i = 0; i < 10; i++) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const frameData = canvas.toDataURL('image/jpeg', 0.95);  // High quality for better predictions
-        frames.push(frameData.split(',')[1]);
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-
-      // Create a temporary video from frames (simplified approach)
-      // In practice, you might want to use a more sophisticated method
-      const response = await axios.post(`${baseUrl}/practice/predict-frames`, {
-        frames: frames,
-        target_word: targetWord,
-        model_type: selectedModel
-      });
-      
-      handlePredictionResult(response.data as PredictionResult);
-      
-    } catch (error) {
-      console.error('Error capturing video:', error);
-      showNotification('error', 'Error capturing video. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [targetWord, selectedModel, baseUrl, showNotification]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Optimized video upload handler
   const handleVideoUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
