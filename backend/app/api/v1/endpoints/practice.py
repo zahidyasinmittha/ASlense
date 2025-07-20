@@ -559,7 +559,7 @@ def enhance_prediction_result(predictions: List[Dict], target_word: str, model_u
             is_correct = False  # 'a' found but very poor context
             match_confidence = a_confidence * 0.3
     else:
-        # For other words, use exact matching
+        # For other words, use exact matching in top 4 predictions
         for i, pred in enumerate(top_4_predictions):
             if pred["word"].lower() == target_word_lower:
                 is_correct = True
@@ -567,8 +567,8 @@ def enhance_prediction_result(predictions: List[Dict], target_word: str, model_u
                 match_confidence = pred["confidence"]
                 break
         
-        # Traditional exact match check for backward compatibility
-        is_match = any(pred["word"].lower() == target_word_lower for pred in top_2_predictions)
+        # Updated: if target word is in top 4, it's a match (not just top 2)
+        is_match = any(pred["word"].lower() == target_word_lower for pred in top_4_predictions)
     
     return EnhancedPredictionResult(
         target_word=target_word,
@@ -576,6 +576,7 @@ def enhance_prediction_result(predictions: List[Dict], target_word: str, model_u
         top_predictions=top_2_predictions,
         is_match=is_match,
         is_correct=is_correct,
+        is_top_4_correct=is_correct,  # Alias for frontend compatibility
         match_confidence=match_confidence,
         model_used=model_used,
         rank_in_top_4=rank_in_top_4
