@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Camera, CameraOff, Target, CheckCircle, AlertCircle, 
   Timer, BarChart3, Video, RefreshCw, Trophy, User, 
@@ -170,6 +170,45 @@ const Practice: React.FC = () => {
     }
   }, [baseUrl]);
 
+  // Load recent practice history from backend
+  const fetchRecentPracticeHistory = useCallback(async () => {
+    if (!user || !token) return;
+    
+    try {
+      const response = await makeAuthenticatedRequest(`${baseUrl}/practice/recent-history`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.recent_practice && Array.isArray(data.recent_practice)) {
+          // Merge with localStorage data, prioritizing backend data
+          const backendHistory = data.recent_practice.map((item: any) => ({
+            word: item.target_word,
+            predictions: item.predictions || [],
+            isMatch: item.is_correct,
+            isTop4Correct: item.is_top_4_correct,
+            confidence: item.confidence,
+            timestamp: item.created_at || new Date().toISOString(),
+            model: item.model_used || 'unknown'
+          }));
+          
+          // Combine with localStorage data, remove duplicates
+          setPracticeHistory(prev => {
+            const combined = [...backendHistory, ...prev];
+            const unique = combined.filter((item, index, self) => 
+              index === self.findIndex(t => 
+                t.word === item.word && 
+                Math.abs(new Date(t.timestamp).getTime() - new Date(item.timestamp).getTime()) < 60000
+              )
+            );
+            return unique.slice(0, 10); // Keep only 10 most recent
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching recent practice history:', error);
+    }
+  }, [user, token, baseUrl, makeAuthenticatedRequest]);
+
   // Effects
   useEffect(() => {
     loadAvailableWords();
@@ -178,8 +217,9 @@ const Practice: React.FC = () => {
   useEffect(() => {
     if (user && token) {
       fetchUserProgress();
+      fetchRecentPracticeHistory();
     }
-  }, [user, token, fetchUserProgress]);
+  }, [user, token, fetchUserProgress, fetchRecentPracticeHistory]);
 
   // Save practice history to localStorage whenever it changes
   useEffect(() => {
@@ -826,7 +866,7 @@ const Practice: React.FC = () => {
                       className="p-2 text-gray-500 hover:text-red-500 transition-colors"
                       title="Clear selection"
                     >
-                      ×
+                      Ã—
                     </button>
                   )}
                 </div>
@@ -1240,7 +1280,7 @@ const Practice: React.FC = () => {
                         <AlertCircle className="h-6 w-6 text-red-600" />
                       )}
                       <span className="font-medium text-gray-700">
-                        {predictionResult.is_top_4_correct || predictionResult.target_word.toLowerCase() === predictionResult.predictions[0]?.word?.toLowerCase() ? '✅ Your prediction is correct!' : '❌ Prediction not matched - Keep practicing!'}
+                        {predictionResult.is_top_4_correct || predictionResult.target_word.toLowerCase() === predictionResult.predictions[0]?.word?.toLowerCase() ? 'âœ… Your prediction is correct!' : 'âŒ Prediction not matched - Keep practicing!'}
                       </span>
                     </div>
                     
@@ -1259,7 +1299,7 @@ const Practice: React.FC = () => {
                     <div className="flex items-center justify-center space-x-2">
                       <CheckCircle className="h-8 w-8 text-green-600" />
                       <h4 className="text-xl font-bold text-green-700">
-                        🎉 Your prediction is correct!
+                        ðŸŽ‰ Your prediction is correct!
                       </h4>
                     </div>
                     <p className="text-green-600 mt-2">
@@ -1372,37 +1412,31 @@ const Practice: React.FC = () => {
                 </div>
 
                 <div className="space-y-3">
-                  {practiceHistory.slice(0, 5).map((entry, index) => (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          {entry.isTop4Correct ? (
-                            <CheckCircle className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <AlertCircle className="h-4 w-4 text-red-600" />
-                          )}
-                          <span className="font-medium text-gray-900">{entry.word}</span>
+                  {practiceHistory.slice(0, 3).map((entry, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
+                      <div className="flex items-center space-x-3">
+                        {entry.isMatch || entry.isTop4Correct ? (
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <AlertCircle className="h-5 w-5 text-red-600" />
+                        )}
+                        <div>
+                          <p className="font-medium text-gray-900">{entry.word}</p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(entry.timestamp).toLocaleDateString()} â€¢ {entry.model}
+                          </p>
                         </div>
-                        <span className={`text-sm font-medium ${
-                          entry.isTop4Correct ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {(entry.confidence * 100).toFixed(4)}%
-                        </span>
                       </div>
-                      {entry.timestamp && (
-                        <div className="mt-1 text-xs text-gray-500">
-                          {new Date(entry.timestamp).toLocaleString()}
-                        </div>
-                      )}
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-gray-700">
+                          {entry.predictions[0]?.word || 'No prediction'}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {((entry.confidence || 0) * 100).toFixed(1)}%
+                        </p>
+                      </div>
                     </div>
                   ))}
-                </div>
-                
-                {/* Persistence indicator */}
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-xs text-gray-500 text-center">
-                    📱 Practice history is saved locally and persists across browser sessions
-                  </p>
                 </div>
               </div>
             )}
