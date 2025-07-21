@@ -429,9 +429,16 @@ const Practice: React.FC = () => {
     }
     
     setConnectionStatus('connecting');
+    console.log('🏃 PRACTICE: Attempting WebSocket connection...');
+    console.log(`🏃 PRACTICE: URL: ${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
+    console.log(`🏃 PRACTICE: Base URL: ${baseUrl}`);
+    console.log(`🏃 PRACTICE: WS URL: ${wsUrl}`);
+    console.log(`🏃 PRACTICE: Model: ${selectedModel}`);
+    
     const ws = new WebSocket(`${wsUrl}/practice/live-predict?model_type=${selectedModel}`);
     
-    ws.onopen = () => {
+    ws.onopen = (event) => {
+      console.log('✅ PRACTICE: WebSocket connected successfully!', event);
       setConnectionStatus('connected');
       setWsConnection(ws);
       showNotification('success', 'Connected to prediction service!');
@@ -440,9 +447,11 @@ const Practice: React.FC = () => {
     ws.onmessage = (event) => {
       try {
         const data: LivePredictionMessage = JSON.parse(event.data);
+        console.log('📥 PRACTICE: Received message:', data);
         
         switch (data.type) {
           case 'connected':
+            console.log('🔗 PRACTICE: Connection confirmed by server');
             break;
             
           case 'frame_received':
@@ -456,25 +465,28 @@ const Practice: React.FC = () => {
             break;
             
           case 'error':
+            console.log('❌ PRACTICE: Server error:', data.message);
             showNotification('error', data.message || 'Prediction error occurred');
             break;
         }
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+        console.error('❌ PRACTICE: Error parsing WebSocket message:', error);
       }
     };
     
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log('🔌 PRACTICE: WebSocket closed:', event.code, event.reason);
       setConnectionStatus('disconnected');
       setWsConnection(null);
     };
     
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.error('❌ PRACTICE: WebSocket error:', error);
+      console.log('❌ PRACTICE: WebSocket state:', ws.readyState);
       setConnectionStatus('disconnected');
       showNotification('error', 'Connection failed. Check if backend is running.');
     };
-  }, [wsUrl, selectedModel, wsConnection, showNotification]);
+  }, [wsUrl, selectedModel, wsConnection, showNotification, baseUrl]);
 
   // Auto prediction - Start sending frames immediately when connected
   const startPrediction = useCallback(async () => {
@@ -985,7 +997,7 @@ const Practice: React.FC = () => {
                 <div className="relative bg-black">
                   <video
                     ref={videoRef}
-                    className="w-full h-96 object-cover"
+                    className="w-full h-120 object-cover"
                     autoPlay
                     muted
                     playsInline
@@ -1127,7 +1139,7 @@ const Practice: React.FC = () => {
                       <video
                         src={videoPreview}
                         controls
-                        className="w-full h-96 object-contain bg-black"
+                        className="w-full h-120 object-contain bg-black"
                         controlsList="nodownload"
                       />
                       <div className="absolute top-3 left-3">

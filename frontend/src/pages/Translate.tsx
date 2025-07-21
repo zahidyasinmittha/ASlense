@@ -26,6 +26,34 @@ interface TranslationResult {
   timestamp: Date;
   mode: 'sign-to-text' | 'text-to-sign';
   predictionType?: 'sentence' | 'word';
+  modelUsed?: string;
+}
+
+interface Prediction {
+  word: string;
+  confidence: number;
+  rank: number;
+  timestamp?: string;
+  allPredictions?: Prediction[]; // For storing all 4 predictions in a batch
+}
+
+interface LivePredictionMessage {
+  type: 'connected' | 'frame_received' | 'progress' | 'live_prediction' | 'final_result' | 'error' | 'stopped' | 'batch_result' | 'high_confidence_prediction';
+  message?: string;
+  frame_count?: number;
+  latest_predictions?: Prediction[];
+  predictions?: Prediction[];
+  confidence?: number;
+  model_used?: string;
+  prediction?: string; // For single prediction format
+  result?: {
+    predicted_text: string;
+    confidence: number;
+    processing_time?: number;
+    model_used?: string;
+    prediction_mode?: string;
+    frames_processed?: number;
+  };
 }
 
 interface SessionStats {
@@ -54,20 +82,32 @@ const Translate: React.FC = () => {
   const { user, token, makeAuthenticatedRequest } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameIntervalRef = useRef<number | null>(null);
   
   // Base URL for API calls
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const baseUrl = 'http://localhost:8000';
+  const wsUrl = baseUrl.replace('http', 'ws');
   
   // State management
   const [translationMode, setTranslationMode] = useState<'sign-to-text' | 'text-to-sign'>('sign-to-text');
   const [predictionMode, setPredictionMode] = useState<'sentence' | 'word'>('sentence');
-  const [selectedModel, setSelectedModel] = useState('hrnet-fast');
+  const [selectedModel, setSelectedModel] = useState('mini-fastsmooth'); // Default to first sentence model
   const [detectedText, setDetectedText] = useState('');
   const [targetText, setTargetText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [lastResult, setLastResult] = useState<TranslationResult | null>(null);
+  
+  // Real-time prediction states
+  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [isLivePredicting, setIsLivePredicting] = useState(false);
+  const [liveResult, setLiveResult] = useState<string>('');
+  const [capturedFrameCount, setCapturedFrameCount] = useState(0);
+  const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
+  const [accumulatedPredictions, setAccumulatedPredictions] = useState<Prediction[]>([]);
+  
   const [sessionStats, setSessionStats] = useState<SessionStats>(() => {
     // Initialize with current session stats if session exists
     const stats = translationSessionManager.getSessionStats();
@@ -98,30 +138,52 @@ const Translate: React.FC = () => {
     signs_mastered: 0
   });
 
-  // Available models
-  const models: ModelOption[] = [
+  // Reset selected model when prediction mode changes
+  useEffect(() => {
+    if (predictionMode === 'sentence') {
+      setSelectedModel('mini-fastsmooth'); // Default to first sentence model
+    } else {
+      setSelectedModel('mini'); // Default to first word model
+    }
+  }, [predictionMode]);
+
+  // Available models - different models based on prediction mode
+  const getSentenceModels = (): ModelOption[] => [
     {
-      id: 'hrnet-fast',
-      name: 'HRNet Fast',
-      accuracy: 89,
+      id: 'mini-fastsmooth',
+      name: 'AS Mini + FastSmooth-ASL LLM',
+      accuracy: 87,
       speed: 'Fast',
-      description: 'Optimized for real-time performance'
+      description: 'Fast sentence prediction with lightweight models'
     },
     {
-      id: 'hrnet-accurate',
-      name: 'HRNet Accurate',
-      accuracy: 94,
+      id: 'pro-refined',
+      name: 'AS Pro + RefinedAgent-ASL',
+      accuracy: 95,
       speed: 'Medium',
-      description: 'Higher accuracy, moderate speed'
-    },
-    {
-      id: 'ensemble-model',
-      name: 'Ensemble Model',
-      accuracy: 96,
-      speed: 'Slow',
-      description: 'Best accuracy, slower processing'
+      description: 'High accuracy sentence prediction with advanced agents'
     }
   ];
+
+  const getWordModels = (): ModelOption[] => [
+    {
+      id: 'mini',
+      name: 'AS Mini',
+      accuracy: 85,
+      speed: 'Fast',
+      description: 'Fast and efficient word prediction'
+    },
+    {
+      id: 'pro',
+      name: 'AS Pro',
+      accuracy: 92,
+      speed: 'Medium',
+      description: 'High accuracy word prediction'
+    }
+  ];
+
+  // Get current models based on prediction mode
+  const models: ModelOption[] = predictionMode === 'sentence' ? getSentenceModels() : getWordModels();
 
   // Fetch user progress data (same as Practice module)
   const fetchUserProgress = useCallback(async () => {
@@ -214,19 +276,232 @@ const Translate: React.FC = () => {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
+  // Frame capture function for real-time prediction
+  const captureFrame = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) {
+      return null;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      return null;
+    }
+
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      return null;
+    }
+
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    
+    if (frameDataUrl.length < 1000) {
+      return null;
+    }
+
+    return frameDataUrl;
+  }, []);
+
+  // WebSocket connection for real-time prediction
+  const connectWebSocket = useCallback(() => {
+    if (wsConnection) {
+      wsConnection.close();
+      setWsConnection(null);
+    }
+    
+    setConnectionStatus('connecting');
+    
+    // Get model type based on selected model
+    const modelType = predictionMode === 'word' ? 
+      (selectedModel === 'pro' ? 'pro' : 'mini') : 
+      (selectedModel === 'pro-refined' ? 'pro' : 'mini');
+    
+    // Direct connection to translate endpoint - match Practice URL pattern
+    const translateWsUrl = `${wsUrl}/translate/live-translate?model_type=${modelType}&prediction_mode=${predictionMode}`;
+    
+    console.log('🏃 TRANSLATE: Attempting WebSocket connection...');
+    console.log(`🏃 TRANSLATE: URL: ${translateWsUrl}`);
+    console.log(`🏃 TRANSLATE: Base URL: ${baseUrl}`);
+    console.log(`🏃 TRANSLATE: WS URL: ${wsUrl}`);
+    console.log(`🏃 TRANSLATE: Model: ${modelType}`);
+    console.log(`🏃 TRANSLATE: Mode: ${predictionMode}`);
+    
+    const ws = new WebSocket(translateWsUrl);
+    
+    ws.onopen = () => {
+      console.log('✅ TRANSLATE: WebSocket connected successfully!');
+      setConnectionStatus('connected');
+      setWsConnection(ws);
+    };
+    
+    ws.onmessage = (event) => {
+      try {
+        const data: LivePredictionMessage = JSON.parse(event.data);
+        console.log('📥 TRANSLATE: Received message:', data);
+          
+          switch (data.type) {
+            case 'connected':
+              console.log('🔗 TRANSLATE: Connection confirmed by server');
+              break;
+              
+            case 'live_prediction':
+              // Real-time prediction result every 20 frames (word mode only)
+              if (data.predictions && data.predictions.length > 0) {
+                setCurrentPredictions(data.predictions);
+                const topPrediction = data.predictions[0];
+                
+                // Update live result for video overlay (still show top prediction prominently)
+                setLiveResult(topPrediction.word);
+                
+                // Add ALL TOP 4 predictions to accumulated list - BATCH ENTRY
+                setAccumulatedPredictions(prev => {
+                  const batchEntry: Prediction = {
+                    word: `Batch ${Math.floor(Date.now() / 1000)}`, // Unique batch identifier
+                    confidence: 0, // Will be calculated from top prediction
+                    rank: 0,
+                    timestamp: new Date().toLocaleTimeString(),
+                    // Add all 4 predictions as metadata
+                    allPredictions: data.predictions // Store all 4 predictions
+                  };
+                  
+                  // Add latest batch at the BEGINNING of array (top of list)
+                  return [batchEntry, ...prev];
+                });
+                
+                // Update Translation Result section with LATEST prediction immediately
+                const result: TranslationResult = {
+                  result: topPrediction.word,
+                  confidence: topPrediction.confidence,
+                  processingTime: 0, // Real-time, no processing time
+                  timestamp: new Date(),
+                  mode: 'sign-to-text',
+                  predictionType: predictionMode,
+                  modelUsed: selectedModel
+                };
+                
+                // Update ONLY detectedText to show latest word without affecting accumulated list
+                setDetectedText(result.result);
+                setLastResult(result);
+              }
+              break;
+              
+            case 'final_result':
+              // Final result for both sentence and word modes
+              if (data.result) {
+                setIsProcessing(false); // Stop processing indicator
+                
+                const result: TranslationResult = {
+                  result: data.result.predicted_text,
+                  confidence: data.result.confidence,
+                  processingTime: data.result.processing_time || 0,
+                  timestamp: new Date(),
+                  mode: 'sign-to-text',
+                  predictionType: predictionMode,
+                  modelUsed: data.result.model_used
+                };
+
+                setDetectedText(result.result);
+                setLastResult(result);
+                
+                // Add to session
+                translationSessionManager.addTranslation({
+                  result: result.result,
+                  confidence: result.confidence,
+                  mode: 'sign-to-text',
+                  isCorrect: result.confidence > 85
+                });
+                
+                // Update recent translations
+                const updatedHistory = translationSessionManager.getRecentTranslations();
+                setRecentTranslations(updatedHistory);
+              }
+              break;
+              
+            case 'error':
+              console.log('❌ TRANSLATE: Server error:', data.message);
+              break;
+          }
+        } catch (error) {
+          console.error('❌ TRANSLATE: Error parsing WebSocket message:', error);
+        }
+      };
+      
+      ws.onclose = (event) => {
+        console.log('🔌 TRANSLATE: WebSocket closed:', event.code, event.reason);
+        setConnectionStatus('disconnected');
+        setWsConnection(null);
+      };
+      
+      ws.onerror = (error) => {
+        console.error('❌ TRANSLATE: WebSocket error:', error);
+        console.log('❌ TRANSLATE: WebSocket state:', ws.readyState);
+        setConnectionStatus('disconnected');
+      };
+    
+  }, [wsUrl, selectedModel, predictionMode]);
+
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Camera access is not supported in this browser.');
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          facingMode: 'user',
+          frameRate: { ideal: 30, min: 15 }
+        },
+        audio: false 
       });
       
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setIsCameraActive(true);
+        const video = videoRef.current;
+        video.srcObject = stream;
+        
+        const waitForVideoReady = new Promise<void>((resolve) => {
+          const checkReady = () => {
+            if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 3) {
+              resolve();
+            } else {
+              setTimeout(checkReady, 100);
+            }
+          };
+          checkReady();
+        });
+        
+        video.play().then(() => {
+          return waitForVideoReady;
+        }).then(() => {
+          setIsCameraActive(true);
+        }).catch(() => {
+          // Camera setup error handled in catch block below
+        });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error accessing camera:', error);
-      alert('Camera access denied or unavailable');
+      
+      let errorMessage = 'Could not access camera. ';
+      
+      if (error.name === 'NotAllowedError') {
+        errorMessage += 'Camera permission was denied.';
+      } else if (error.name === 'NotFoundError') {
+        errorMessage += 'No camera device found.';
+      } else if (error.name === 'NotReadableError') {
+        errorMessage += 'Camera is already in use by another application.';
+      } else {
+        errorMessage += 'Please check your camera settings.';
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -237,53 +512,110 @@ const Translate: React.FC = () => {
       videoRef.current.srcObject = null;
       setIsCameraActive(false);
       setIsRecording(false);
+      setIsLivePredicting(false);
     }
+    
+    // Close WebSocket connection
+    if (wsConnection) {
+      wsConnection.close();
+      setWsConnection(null);
+    }
+    setConnectionStatus('disconnected');
+    
+    // Clear frame interval
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    
+    // Clear live predictions
+    setLiveResult('');
+    setCurrentPredictions([]);
+    setCapturedFrameCount(0);
   };
 
   const startPrediction = async () => {
     if (!isCameraActive || isRecording) return;
     
     setIsRecording(true);
-    setIsProcessing(true);
+    setIsLivePredicting(true);
+    setLiveResult('');
+    setCurrentPredictions([]);
+    setAccumulatedPredictions([]); // Clear accumulated predictions on new session
     
-    try {
-      // Simulate processing time based on prediction mode
-      const processingTime = predictionMode === 'sentence' ? 3000 + Math.random() * 2000 : 1500 + Math.random() * 1000;
-      await new Promise(resolve => setTimeout(resolve, processingTime));
+    // Connect WebSocket if not connected
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+      connectWebSocket();
       
-      // Simulate prediction results
-      const confidence = Math.floor(85 + Math.random() * 15);
-      const actualProcessingTime = Math.floor(processingTime);
+      // Wait for connection
+      let attempts = 0;
+      while ((!wsConnection || wsConnection.readyState !== WebSocket.OPEN) && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        attempts++;
+      }
       
-      const sentenceResults = [
-        "Hello, how are you today?",
-        "Thank you very much",
-        "Nice to meet you",
-        "What is your name?",
-        "Have a good day"
-      ];
+      if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+        setIsRecording(false);
+        setIsLivePredicting(false);
+        return;
+      }
+    }
+    
+    // Start sending frames - match Practice section timing exactly (150ms)
+    let frameCount = 0;
+    frameIntervalRef.current = window.setInterval(() => {
+      if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+        return;
+      }
       
-      const wordResults = [
-        "Hello",
-        "Thank",
-        "You", 
-        "Please",
-        "Good",
-        "Day",
-        "Name"
-      ];
+      const frameDataUrl = captureFrame();
       
-      const resultText = predictionMode === 'sentence' 
-        ? sentenceResults[Math.floor(Math.random() * sentenceResults.length)]
-        : wordResults[Math.floor(Math.random() * wordResults.length)];
-      
+      if (frameDataUrl) {
+        frameCount++;
+        setCapturedFrameCount(frameCount); // Update frame count immediately like Practice
+        
+        // Send EVERY frame to backend like Practice section
+        wsConnection.send(JSON.stringify({
+          type: 'frame',
+          frame: frameDataUrl,
+          prediction_mode: predictionMode
+        }));
+      }
+    }, 150); // Match Practice section: capture frame every 150ms
+  };
+
+  const stopPrediction = () => {
+    setIsRecording(false);
+    setIsLivePredicting(false);
+    
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    
+    // For sentence mode, start processing
+    if (predictionMode === 'sentence') {
+      setIsProcessing(true);
+    }
+    
+    // Send stop message to WebSocket for final processing (especially for sentence mode)
+    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+      wsConnection.send(JSON.stringify({
+        type: 'stop'
+      }));
+    }
+    
+    // For word mode, create final result from live prediction if available
+    if (predictionMode === 'word' && liveResult && currentPredictions.length > 0) {
+      const topPrediction = currentPredictions[0];
       const result: TranslationResult = {
-        result: resultText,
-        confidence,
-        processingTime: actualProcessingTime,
+        result: liveResult,
+        confidence: topPrediction.confidence,
+        processingTime: 0, // Real-time, no processing time
         timestamp: new Date(),
         mode: 'sign-to-text',
-        predictionType: predictionMode
+        predictionType: predictionMode,
+        modelUsed: selectedModel
       };
 
       setDetectedText(result.result);
@@ -292,26 +624,18 @@ const Translate: React.FC = () => {
       // Add to session
       translationSessionManager.addTranslation({
         result: result.result,
-        confidence: confidence,
+        confidence: topPrediction.confidence,
         mode: 'sign-to-text',
-        isCorrect: confidence > 85
+        isCorrect: topPrediction.confidence > 85
       });
       
       // Update recent translations
       const updatedHistory = translationSessionManager.getRecentTranslations();
       setRecentTranslations(updatedHistory);
-      
-    } catch (error) {
-      console.error('Prediction error:', error);
-    } finally {
-      setIsProcessing(false);
-      setIsRecording(false);
     }
-  };
-
-  const stopPrediction = () => {
-    setIsRecording(false);
-    setIsProcessing(false);
+    
+    // For sentence mode, the final result will come from WebSocket final_result message
+    // and setIsProcessing(false) will be called in the WebSocket message handler
   };
 
   const translateTextToSign = async () => {
@@ -366,6 +690,7 @@ const Translate: React.FC = () => {
     setDetectedText('');
     setLastResult(null);
     setTargetText('');
+    setAccumulatedPredictions([]); // Clear accumulated predictions
   };
 
   return (
@@ -554,6 +879,76 @@ const Translate: React.FC = () => {
                         </div>
                       </div>
                     )}
+                    
+                    {/* Live Prediction Overlay - SHOW ALL TOP 4 PREDICTIONS */}
+                    {isLivePredicting && currentPredictions.length > 0 && (
+                      <div className="absolute bottom-4 left-4 right-4">
+                        <div className="bg-black bg-opacity-80 text-white p-4 rounded-lg">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs text-gray-300">Live Predictions (Every 20 Frames)</span>
+                            <span className="text-xs text-gray-300">Frames: {capturedFrameCount}</span>
+                          </div>
+                          
+                          {/* Display ALL TOP 4 Predictions */}
+                          <div className="space-y-2">
+                            {currentPredictions.slice(0, 4).map((pred, index) => (
+                              <div 
+                                key={`live-${pred.word}-${index}`}
+                                className={`flex justify-between items-center p-2 rounded ${
+                                  index === 0 
+                                    ? 'bg-green-600 bg-opacity-80' 
+                                    : 'bg-white bg-opacity-20'
+                                }`}
+                              >
+                                <div className="flex items-center space-x-2">
+                                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                    index === 0 
+                                      ? 'bg-white text-green-600' 
+                                      : 'bg-gray-600 text-white'
+                                  }`}>
+                                    {index + 1}
+                                  </span>
+                                  <span className={`font-medium ${
+                                    index === 0 ? 'text-white text-lg' : 'text-gray-200 text-sm'
+                                  }`}>
+                                    {pred.word}
+                                  </span>
+                                  {index === 0 && (
+                                    <span className="text-xs bg-white text-green-600 px-2 py-1 rounded-full font-bold">
+                                      BEST
+                                    </span>
+                                  )}
+                                </div>
+                                <span className={`font-semibold text-xs px-2 py-1 rounded ${
+                                  index === 0 
+                                    ? 'bg-white text-green-600' 
+                                    : 'bg-gray-600 text-white'
+                                }`}>
+                                  {(pred.confidence * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          
+                          <div className="mt-2 pt-2 border-t border-gray-500 text-xs text-gray-300 text-center">
+                            Real-time GCN Model • Next update in {20 - (capturedFrameCount % 20)} frames
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Connection Status */}
+                    {predictionMode === 'word' && connectionStatus !== 'disconnected' && (
+                      <div className="absolute top-4 right-4">
+                        <div className={`px-2 py-1 rounded-full text-xs ${
+                          connectionStatus === 'connected' 
+                            ? 'bg-green-500 text-white' 
+                            : 'bg-yellow-500 text-black'
+                        }`}>
+                          {connectionStatus === 'connected' ? 'Live' : 'Connecting...'}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <canvas ref={canvasRef} className="hidden" />
                 </div>
@@ -561,13 +956,15 @@ const Translate: React.FC = () => {
                 {/* Camera Controls */}
                 <div className="flex gap-3">
                   {!isCameraActive ? (
-                    <button
-                      onClick={startCamera}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center justify-center"
-                    >
-                      <Video className="w-4 h-4 mr-2" />
-                      Start Camera
-                    </button>
+                    <>
+                      <button
+                        onClick={startCamera}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center justify-center"
+                      >
+                        <Video className="w-4 h-4 mr-2" />
+                        Start Camera
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button
@@ -584,7 +981,7 @@ const Translate: React.FC = () => {
                           className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                         >
                           <Zap className="w-4 h-4 mr-2" />
-                          Start Detection
+                          Start {predictionMode === 'word' ? 'Live Detection' : 'Detection'}
                         </button>
                       ) : (
                         <button
@@ -592,19 +989,41 @@ const Translate: React.FC = () => {
                           className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center justify-center"
                         >
                           <Square className="w-4 h-4 mr-2" />
-                          Stop Detection
+                          Stop Detection ({capturedFrameCount} frames)
                         </button>
                       )}
                     </>
                   )}
                 </div>
 
-                {isProcessing && (
+                {isLivePredicting && predictionMode === 'word' && (
+                  <div className="text-center">
+                    <div className="inline-flex items-center px-4 py-2 bg-blue-50 rounded-lg">
+                      <div className="animate-pulse w-3 h-3 bg-blue-600 rounded-full mr-3"></div>
+                      <span className="text-blue-700">
+                        Live word detection active...
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+                {isProcessing && predictionMode === 'sentence' && (
                   <div className="text-center">
                     <div className="inline-flex items-center px-4 py-2 bg-blue-50 rounded-lg">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
                       <span className="text-blue-700">
-                        {predictionMode === 'sentence' ? 'Analyzing sentence...' : 'Detecting word...'}
+                        Processing sentence...
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+                {!isRecording && !isProcessing && predictionMode === 'sentence' && connectionStatus === 'connected' && (
+                  <div className="text-center">
+                    <div className="inline-flex items-center px-4 py-2 bg-green-50 rounded-lg">
+                      <div className="w-3 h-3 bg-green-600 rounded-full mr-3"></div>
+                      <span className="text-green-700">
+                        Ready for sentence detection
                       </span>
                     </div>
                   </div>
@@ -664,18 +1083,216 @@ const Translate: React.FC = () => {
             
             <div className="space-y-4">
               {translationMode === 'sign-to-text' ? (
-                detectedText ? (
-                  <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
-                    <div className="flex items-center mb-2">
-                      <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                      <span className="font-medium text-green-800">Detected Text:</span>
-                    </div>
-                    <p className="text-gray-800 text-lg">{detectedText}</p>
-                    {lastResult && (
-                      <div className="mt-3 pt-3 border-t border-green-200">
-                        <p className="text-sm text-gray-600">
-                          Confidence: <span className="font-medium">{lastResult.confidence}%</span>
+                (detectedText || accumulatedPredictions.length > 0) ? (
+                  <div className="space-y-3">
+                    {/* Real-time live prediction display */}
+                    {detectedText && (
+                      <div className={`p-4 rounded-lg border transition-all duration-300 ${
+                        isLivePredicting && predictionMode === 'word'
+                          ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-300 animate-pulse'
+                          : 'bg-gradient-to-r from-green-50 to-blue-50 border-green-200'
+                      }`}>
+                        <div className="flex items-center mb-2">
+                          {isLivePredicting && predictionMode === 'word' ? (
+                            <>
+                              <div className="w-3 h-3 bg-blue-500 rounded-full mr-2 animate-ping"></div>
+                              <span className="font-medium text-blue-800">Live Prediction (Real-time):</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                              <span className="font-medium text-green-800">Current Prediction:</span>
+                            </>
+                          )}
+                          {isLivePredicting && predictionMode === 'word' && (
+                            <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                              Frame: {capturedFrameCount}
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-lg font-semibold ${
+                          isLivePredicting && predictionMode === 'word' ? 'text-blue-900' : 'text-gray-800'
+                        }`}>
+                          {detectedText}
                         </p>
+                        {lastResult && (
+                          <div className={`mt-3 pt-3 border-t ${
+                            isLivePredicting && predictionMode === 'word' ? 'border-blue-200' : 'border-green-200'
+                          }`}>
+                            <div className="grid grid-cols-3 gap-4 text-sm text-gray-600">
+                              <div>
+                                Model: <span className="font-medium">{selectedModel || 'AS Mini'}</span>
+                              </div>
+                              <div>
+                                Confidence: <span className="font-medium">{(lastResult.confidence * 100).toFixed(1)}%</span>
+                              </div>
+                              {isLivePredicting && predictionMode === 'word' && (
+                                <div>
+                                  Updated: <span className="font-medium text-blue-600">Live</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Accumulated predictions - Show ALL TOP 4 for each 20-frame batch */}
+                    {accumulatedPredictions.length > 0 && (
+                      <div className="p-4 bg-gradient-to-r from-gray-50 to-blue-50 rounded-lg border border-gray-200 transition-all duration-300">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center">
+                            <History className="w-5 h-5 text-gray-600 mr-2" />
+                            <span className="font-medium text-gray-800">Real-time Prediction Batches:</span>
+                          </div>
+                          <span className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-full">
+                            {accumulatedPredictions.length} batches
+                          </span>
+                        </div>
+                        <div className="space-y-3 max-h-[36rem] overflow-y-auto">
+                          {accumulatedPredictions.slice().reverse().map((batchEntry, reversedIndex) => {
+                            const actualBatchNumber = accumulatedPredictions.length - reversedIndex;
+                            const isLatest = reversedIndex === accumulatedPredictions.length - 1;
+                            return (
+                              <div 
+                                key={`batch-${reversedIndex}-${batchEntry.timestamp}`} 
+                                className={`p-3 rounded-lg border transition-all duration-200 ${
+                                  isLatest
+                                    ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-200' 
+                                    : 'bg-white border-gray-200'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className={`text-sm font-medium ${
+                                    isLatest ? 'text-blue-800' : 'text-gray-700'
+                                  }`}>
+                                    Batch #{actualBatchNumber}
+                                    {isLatest && (
+                                      <span className="ml-2 text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded-full">
+                                        Latest
+                                      </span>
+                                    )}
+                                  </span>
+                                {batchEntry.timestamp && (
+                                  <span className="text-xs text-gray-500">
+                                    {batchEntry.timestamp}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {/* Display all 4 predictions for this batch */}
+                              {batchEntry.allPredictions && batchEntry.allPredictions.length > 0 ? (
+                                <div className="space-y-1">
+                                  {batchEntry.allPredictions.slice(0, 4).map((pred, predIndex) => (
+                                    <div 
+                                      key={`pred-${predIndex}`}
+                                      className={`flex justify-between items-center p-2 rounded text-sm ${
+                                        predIndex === 0 
+                                          ? 'bg-green-100 border border-green-300' 
+                                          : 'bg-gray-50 border border-gray-200'
+                                      }`}
+                                    >
+                                      <div className="flex items-center space-x-2">
+                                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                                          predIndex === 0 
+                                            ? 'bg-green-600 text-white' 
+                                            : 'bg-gray-400 text-white'
+                                        }`}>
+                                          {predIndex + 1}
+                                        </span>
+                                        <span className={`font-medium ${
+                                          predIndex === 0 ? 'text-green-800' : 'text-gray-700'
+                                        }`}>
+                                          {pred.word}
+                                        </span>
+                                      </div>
+                                      <span className={`text-xs px-2 py-1 rounded font-semibold ${
+                                        predIndex === 0 
+                                          ? 'bg-green-200 text-green-800' 
+                                          : 'bg-gray-200 text-gray-600'
+                                      }`}>
+                                        {(pred.confidence * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-gray-500 italic">No predictions available</div>
+                              )}
+                            </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-600 flex items-center justify-between">
+                          <div className="flex items-center">
+                            <div className="w-2 h-2 bg-blue-400 rounded-full mr-2 animate-pulse"></div>
+                            Every 20 frames • TOP 4 per batch
+                          </div>
+                          <span className="text-gray-500">Showing all {accumulatedPredictions.length} batches</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Current Live Predictions - Show TOP 4 like Practice section */}
+                    {isLivePredicting && predictionMode === 'word' && currentPredictions.length > 0 && (
+                      <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200 transition-all duration-300">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center">
+                            <Target className="w-5 h-5 text-green-600 mr-2" />
+                            <span className="font-medium text-green-800">Current Live Predictions (Top 4):</span>
+                          </div>
+                          <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full animate-pulse">
+                            Frame: {capturedFrameCount}
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          {currentPredictions.slice(0, 4).map((pred, index) => (
+                            <div 
+                              key={`${pred.word}-${index}-current`} 
+                              className={`flex justify-between items-center p-3 rounded-lg transition-all duration-200 ${
+                                index === 0
+                                  ? 'bg-gradient-to-r from-green-100 to-emerald-100 border border-green-300 ring-2 ring-green-200' 
+                                  : 'bg-white border border-gray-200 hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <span className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${
+                                  index === 0 
+                                    ? 'bg-green-200 text-green-800' 
+                                    : 'bg-blue-100 text-blue-600'
+                                }`}>
+                                  {index + 1}
+                                </span>
+                                <span className={`font-medium ${
+                                  index === 0 ? 'text-green-800' : 'text-gray-700'
+                                }`}>
+                                  {pred.word}
+                                  {index === 0 && (
+                                    <span className="ml-2 text-xs bg-green-200 text-green-700 px-2 py-1 rounded-full">
+                                      Best
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className={`font-semibold text-sm px-2 py-1 rounded ${
+                                  index === 0
+                                    ? 'bg-green-200 text-green-800' 
+                                    : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {(pred.confidence * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-green-200 text-xs text-green-600 flex items-center justify-between">
+                          <div className="flex items-center">
+                            <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-ping"></div>
+                            Live predictions • Updated every 20 frames
+                          </div>
+                          <span className="text-green-500">Real-time</span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -683,6 +1300,9 @@ const Translate: React.FC = () => {
                   <div className="p-8 text-center text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
                     <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
                     <p>Translation results will appear here</p>
+                    <p className="text-sm mt-2">
+                      {predictionMode === 'word' ? 'Real-time word predictions every 20 frames' : 'Start translation to see results'}
+                    </p>
                   </div>
                 )
               ) : (
@@ -694,6 +1314,10 @@ const Translate: React.FC = () => {
                     </div>
                     <p className="text-gray-800 text-lg mb-3">{lastResult.result}</p>
                     <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Model:</span>
+                        <span className="font-medium">{selectedModel || 'AS Mini'}</span>
+                      </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Confidence:</span>
                         <span className="font-medium">{lastResult.confidence}%</span>

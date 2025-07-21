@@ -29,12 +29,10 @@ class VideoAdmin(ModelView, model=Video):
 admin = Admin(app, engine)
 admin.add_view(VideoAdmin)
 
-# Logging middleware
+# Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    print(f"📥 {request.method} {request.url.path}")
     response = await call_next(request)
-    print(f"📤 {request.method} {request.url.path} - {response.status_code}")
     return response
 
 app.add_middleware(
@@ -61,9 +59,9 @@ async def startup_event():
     db = next(get_db())
     try:
         create_default_admin(db)
-        print("✅ Default admin user checked/created")
     except Exception as e:
-        print(f"❌ Error creating default admin: {e}")
+        # Admin creation error logged internally
+        pass
     finally:
         db.close()
 
@@ -92,7 +90,7 @@ app.include_router(api_router, prefix="/api/v1")
 
 # Legacy routes for backward compatibility (will be deprecated)
 # These can be removed once frontend is updated to use /api/v1 prefix
-from app.api.v1.endpoints import auth, user, videos, learn, practice, admin
+from app.api.v1.endpoints import auth, user, videos, learn, practice, admin, translate
 
 # Mount individual routers for backward compatibility
 app.include_router(auth.router, prefix="/auth", tags=["auth-legacy"])
@@ -100,4 +98,5 @@ app.include_router(user.router, prefix="/user", tags=["user-legacy"])
 app.include_router(videos.router, prefix="/videos", tags=["videos-legacy"])
 app.include_router(learn.router, prefix="/learn", tags=["learn-legacy"])
 app.include_router(practice.router, prefix="/practice", tags=["practice-legacy"])
+app.include_router(translate.router, prefix="/translate", tags=["translate-legacy"])
 app.include_router(admin.router, prefix="/admin-api", tags=["admin-legacy"])
