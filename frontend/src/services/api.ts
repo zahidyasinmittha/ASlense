@@ -1,13 +1,91 @@
 import axios from 'axios';
 
+// Get base URL from environment variables
+const BASE_URL = import.meta.env.VITE_BACKEND_BASEURL || 'http://localhost:8000';
+const WS_URL = BASE_URL.replace('http', 'ws');
+
 // Create axios instance with default configuration
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: BASE_URL,
   timeout: 30000, // 30 seconds timeout
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+// Export API configuration for other files to use
+export const API_CONFIG = {
+  BASE_URL,
+  WS_URL,
+  ENDPOINTS: {
+    // Authentication endpoints
+    AUTH: {
+      LOGIN: '/auth/login',
+      REGISTER: '/auth/register',
+      REFRESH: '/auth/refresh',
+      LOGOUT: '/auth/logout',
+      ME: '/auth/me',
+    },
+    
+    // User endpoints
+    USER: {
+      DASHBOARD: '/user/dashboard',
+      PROFILE: '/user/profile',
+      PROGRESS: '/user/progress',
+      ACHIEVEMENTS: '/user/achievements',
+      SETTINGS: '/user/settings',
+    },
+    
+    // Translation endpoints
+    TRANSLATE: {
+      START_SESSION: '/translate/start-session',
+      END_SESSION: (sessionId: string) => `/translate/end-session/${sessionId}`,
+      TRANSLATE_TEXT: '/translate/translate',
+      VIDEO_PREDICT: '/translate/video-predict',
+      LIVE_TRANSLATE_WS: (modelType: string, predictionMode: string) => 
+        `${WS_URL}/translate/live-translate?model_type=${modelType}&prediction_mode=${predictionMode}`,
+    },
+    
+    // Practice endpoints
+    PRACTICE: {
+      START_SESSION: '/practice/start-session',
+      END_SESSION: (sessionId: string) => `/practice/end-session/${sessionId}`,
+      MODELS_STATUS: '/practice/models/status',
+      AVAILABLE_WORDS: '/practice/available-words',
+      PREDICT_VIDEO: '/practice/predict-video',
+      PREDICT_FRAMES: '/practice/predict-frames',
+      SAVE_USER_PREDICTION: '/practice/predict-with-user',
+      PING: '/practice/ping',
+      LIVE_PRACTICE_WS: (modelType: string, category: string) => 
+        `${WS_URL}/practice/live-practice?model_type=${modelType}&category=${category}`,
+    },
+    
+    // Learn endpoints
+    LEARN: {
+      VIDEOS: '/learn/videos',
+      SEARCH: '/learn/search',
+      CATEGORIES: '/learn/categories',
+    },
+    
+    // Videos endpoints
+    VIDEOS: {
+      LIST: '/videos',
+      BY_ID: (id: number) => `/videos/${id}`,
+      COUNT: '/videos/count',
+      SEARCH: '/videos/search',
+    },
+    
+    // Admin endpoints
+    ADMIN: {
+      STATS: '/admin-api/stats',
+      USERS: '/admin-api/users',
+      VIDEOS: '/admin-api/videos',
+      METRICS: '/admin-api/metrics',
+      USER_BY_ID: (userId: number) => `/admin-api/users/${userId}`,
+      TOGGLE_USER_STATUS: (userId: number) => `/admin-api/users/${userId}/toggle-status`,
+    },
+  }
+};
 
 // Request interceptor to add auth token
 api.interceptors.request.use(
@@ -38,7 +116,7 @@ api.interceptors.response.use(
       try {
         const refreshToken = localStorage.getItem('refresh_token');
         if (refreshToken) {
-          const response = await axios.post('http://localhost:8000/auth/refresh', {
+          const response = await axios.post(`${BASE_URL}/auth/refresh`, {
             refresh_token: refreshToken,
           });
 
@@ -65,63 +143,109 @@ api.interceptors.response.use(
 // API endpoints
 export const authAPI = {
   login: (credentials: { username: string; password: string }) =>
-    api.post('/auth/login', credentials),
+    api.post(API_CONFIG.ENDPOINTS.AUTH.LOGIN, credentials),
   
   register: (userData: { username: string; email: string; password: string; full_name?: string }) =>
-    api.post('/auth/register', userData),
+    api.post(API_CONFIG.ENDPOINTS.AUTH.REGISTER, userData),
   
   refresh: (refreshToken: string) =>
-    api.post('/auth/refresh', { refresh_token: refreshToken }),
+    api.post(API_CONFIG.ENDPOINTS.AUTH.REFRESH, { refresh_token: refreshToken }),
   
-  me: () => api.get('/auth/me'),
+  me: () => api.get(API_CONFIG.ENDPOINTS.AUTH.ME),
 };
 
 export const adminAPI = {
-  getStats: () => api.get('/admin-api/stats'),
-  getUsers: (skip = 0, limit = 100) => api.get(`/admin-api/users?skip=${skip}&limit=${limit}`),
-  getVideos: () => api.get('/admin-api/videos'),
-  getMetrics: () => api.get('/admin-api/metrics'),
+  getStats: () => api.get(API_CONFIG.ENDPOINTS.ADMIN.STATS),
+  getUsers: (skip = 0, limit = 100) => api.get(`${API_CONFIG.ENDPOINTS.ADMIN.USERS}?skip=${skip}&limit=${limit}`),
+  getVideos: () => api.get(API_CONFIG.ENDPOINTS.ADMIN.VIDEOS),
+  getMetrics: () => api.get(API_CONFIG.ENDPOINTS.ADMIN.METRICS),
   
-  createUser: (userData: any) => api.post('/admin-api/users', userData),
-  updateUser: (userId: number, userData: any) => api.put(`/admin-api/users/${userId}`, userData),
-  deleteUser: (userId: number) => api.delete(`/admin-api/users/${userId}`),
-  toggleUserStatus: (userId: number) => api.patch(`/admin-api/users/${userId}/toggle-status`),
+  createUser: (userData: any) => api.post(API_CONFIG.ENDPOINTS.ADMIN.USERS, userData),
+  updateUser: (userId: number, userData: any) => api.put(API_CONFIG.ENDPOINTS.ADMIN.USER_BY_ID(userId), userData),
+  deleteUser: (userId: number) => api.delete(API_CONFIG.ENDPOINTS.ADMIN.USER_BY_ID(userId)),
+  toggleUserStatus: (userId: number) => api.patch(API_CONFIG.ENDPOINTS.ADMIN.TOGGLE_USER_STATUS(userId)),
 };
 
 export const userAPI = {
-  getDashboard: () => api.get('/user/dashboard'),
-  getProgress: () => api.get('/user/progress'),
-  getAchievements: () => api.get('/user/achievements'),
-  updateProfile: (userData: any) => api.put('/user/profile', userData),
+  getDashboard: () => api.get(API_CONFIG.ENDPOINTS.USER.DASHBOARD),
+  getProgress: () => api.get(API_CONFIG.ENDPOINTS.USER.PROGRESS),
+  getAchievements: () => api.get(API_CONFIG.ENDPOINTS.USER.ACHIEVEMENTS),
+  updateProfile: (userData: any) => api.put(API_CONFIG.ENDPOINTS.USER.PROFILE, userData),
+  updateSettings: (settings: any) => api.put(API_CONFIG.ENDPOINTS.USER.SETTINGS, settings),
 };
 
 export const videosAPI = {
-  getVideos: (params: any) => api.get('/videos', { params }),
-  getVideoById: (id: number) => api.get(`/videos/${id}`),
-  getVideoCount: () => api.get('/videos/count'),
-  searchVideos: (params: any) => api.get('/videos/search', { params }),
+  getVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.VIDEOS.LIST, { params }),
+  getVideoById: (id: number) => api.get(API_CONFIG.ENDPOINTS.VIDEOS.BY_ID(id)),
+  getVideoCount: () => api.get(API_CONFIG.ENDPOINTS.VIDEOS.COUNT),
+  searchVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.VIDEOS.SEARCH, { params }),
 };
 
 export const practiceAPI = {
-  getModelsStatus: () => api.get('/practice/models/status'),
-  getAvailableWords: () => api.get('/practice/available-words'),
+  getModelsStatus: () => api.get(API_CONFIG.ENDPOINTS.PRACTICE.MODELS_STATUS),
+  getAvailableWords: () => api.get(API_CONFIG.ENDPOINTS.PRACTICE.AVAILABLE_WORDS),
   
   predictVideo: (formData: FormData) => 
-    api.post('/practice/predict-video', formData, {
+    api.post(API_CONFIG.ENDPOINTS.PRACTICE.PREDICT_VIDEO, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     }),
   
-  predictFrames: (data: any) => api.post('/practice/predict-frames', data),
+  predictFrames: (data: any) => api.post(API_CONFIG.ENDPOINTS.PRACTICE.PREDICT_FRAMES, data),
   
-  saveUserPrediction: (data: any) => api.post('/practice/predict-with-user', data),
+  saveUserPrediction: (data: any) => api.post(API_CONFIG.ENDPOINTS.PRACTICE.SAVE_USER_PREDICTION, data),
   
-  ping: () => api.get('/practice/ping'),
+  ping: () => api.get(API_CONFIG.ENDPOINTS.PRACTICE.PING),
+  
+  startSession: (sessionData: any) => api.post(API_CONFIG.ENDPOINTS.PRACTICE.START_SESSION, sessionData),
+  
+  endSession: (sessionId: string, sessionData: any) => 
+    api.post(API_CONFIG.ENDPOINTS.PRACTICE.END_SESSION(sessionId), sessionData),
+};
+
+export const translateAPI = {
+  startSession: (sessionData: any) => api.post(API_CONFIG.ENDPOINTS.TRANSLATE.START_SESSION, sessionData),
+  
+  endSession: (sessionId: string, sessionData: any) => 
+    api.post(API_CONFIG.ENDPOINTS.TRANSLATE.END_SESSION(sessionId), sessionData),
+  
+  translateText: (translationData: any) => api.post(API_CONFIG.ENDPOINTS.TRANSLATE.TRANSLATE_TEXT, translationData),
+  
+  predictVideo: (formData: FormData) => 
+    api.post(API_CONFIG.ENDPOINTS.TRANSLATE.VIDEO_PREDICT, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }),
 };
 
 export const learnAPI = {
-  getVideos: (params: any) => api.get('/learn/videos', { params }),
-  searchVideos: (params: any) => api.get('/learn/search', { params }),
-  getCategories: () => api.get('/learn/categories'),
+  getVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.LEARN.VIDEOS, { params }),
+  searchVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.LEARN.SEARCH, { params }),
+  getCategories: () => api.get(API_CONFIG.ENDPOINTS.LEARN.CATEGORIES),
+};
+
+// WebSocket utilities
+export const WebSocketAPI = {
+  getLiveTranslateUrl: (modelType: string, predictionMode: string) =>
+    API_CONFIG.ENDPOINTS.TRANSLATE.LIVE_TRANSLATE_WS(modelType, predictionMode),
+  
+  getLivePracticeUrl: (modelType: string, category: string) =>
+    API_CONFIG.ENDPOINTS.PRACTICE.LIVE_PRACTICE_WS(modelType, category),
+  
+  createWebSocket: (url: string): WebSocket => new WebSocket(url),
+};
+
+// Utility functions
+export const ApiUtils = {
+  getFullUrl: (endpoint: string): string => `${BASE_URL}${endpoint}`,
+  getWebSocketUrl: (endpoint: string): string => `${WS_URL}${endpoint}`,
+  handleApiError: (error: any): string => {
+    if (error.response?.data?.detail) {
+      return error.response.data.detail;
+    }
+    if (error.message) {
+      return error.message;
+    }
+    return 'An unexpected error occurred';
+  },
 };
 
 export default api;

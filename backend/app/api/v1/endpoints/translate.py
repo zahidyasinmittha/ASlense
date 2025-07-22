@@ -19,7 +19,7 @@ from app.models import User, TranslationSession, TranslationHistory
 from app.services.user_service import UserService
 from app.schemas import UserProgressUpdate
 from app.inference import run_inference
-from app.real_model_integration import get_pro_model, get_mini_model, predict_video_with_model
+from app.real_model_integration import get_pro_model, get_mini_model, predict_video_sentence
 
 # Import GCN processing functions from real_model_integration
 try:
@@ -898,3 +898,124 @@ async def websocket_live_translate(
             })
         except:
             pass
+
+@router.post("/video-predict")
+async def predict_video(
+    video: UploadFile = File(...),
+    model_type: str = Query(default="mini", description="Model type: 'mini' or 'pro'"),
+    prediction_mode: str = Query(default="sentence", description="Prediction mode: 'word' or 'sentence'"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Predict ASL from uploaded video file
+    """
+    
+    print(f"📹 Video prediction request - Model: {model_type}, Mode: {prediction_mode}")
+    
+    # Validate file type
+    if not video.content_type.startswith('video/'):
+        raise HTTPException(status_code=400, detail="File must be a video")
+    
+    # Validate file size (50MB limit)
+    video_content = await video.read()
+    if len(video_content) > 50 * 1024 * 1024:  # 50MB
+        raise HTTPException(status_code=400, detail="Video file too large (max 50MB)")
+    
+    try:
+        # Write video to temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
+            temp_file.write(video_content)
+            temp_video_path = temp_file.name
+        
+        print(f"📼 Video saved to temporary file: {temp_video_path}")
+        
+        # Get the appropriate model
+        if model_type == "pro":
+            model = get_pro_model()
+        else:
+            model = get_mini_model()
+        
+        if model is None:
+            raise HTTPException(status_code=500, detail=f"Failed to load {model_type} model")
+        
+        print(f"🤖 Using {model_type} model for video prediction")
+        
+        # Process video with the model
+        result = predict_video_sentence(temp_video_path, model, prediction_mode)
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_video_path)
+        except:
+            pass
+        
+        print(f"✅ Video prediction completed: {result}")
+        
+        # Create translation session entry
+        translation_session = TranslationSession(
+            user_id=current_user.id,
+            mode='sign-to-text',
+            prediction_type=prediction_mode,
+            model_used=model_type,
+            start_time=datetime.utcnow(),
+            end_time=datetime.utcnow(),
+            total_duration=timedelta(seconds=result.get('processing_time', 0)),
+            frames_processed=result.get('frames_processed', 0),
+            words_detected=1 if result.get('predicted_text') else 0,
+            accuracy_score=result.get('confidence', 0.0)
+        )
+        
+        db.add(translation_session)
+        db.commit()
+        db.refresh(translation_session)
+        
+        # Add to translation history
+        if result.get('predicted_text'):
+            translation_history = TranslationHistory(
+                session_id=translation_session.id,
+                user_id=current_user.id,
+                input_type='video',
+                source_text='[Video Upload]',
+                translated_text=result['predicted_text'],
+                confidence_score=result.get('confidence', 0.0),
+                model_used=model_type,
+                processing_time=result.get('processing_time', 0.0),
+                created_at=datetime.utcnow()
+            )
+            db.add(translation_history)
+            db.commit()
+        
+        # Update user progress
+        user_service = UserService(db)
+        progress_data = UserProgressUpdate(
+            total_translations=1,
+            total_time_spent=int(result.get('processing_time', 0)),
+            accuracy_improvement=result.get('confidence', 0.0),
+            words_learned=1 if result.get('predicted_text') else 0
+        )
+        user_service.update_user_progress(current_user.id, progress_data)
+        
+        return {
+            "success": True,
+            "predicted_text": result.get('predicted_text', 'No prediction available'),
+            "confidence": result.get('confidence', 0.0),
+            "processing_time": result.get('processing_time', 0.0),
+            "frames_processed": result.get('frames_processed', 0),
+            "model_used": model_type,
+            "prediction_mode": prediction_mode,
+            "session_id": translation_session.id
+        }
+        
+    except Exception as e:
+        print(f"❌ Video prediction error: {str(e)}")
+        
+        # Clean up temporary file if it exists
+        try:
+            if 'temp_video_path' in locals():
+                os.unlink(temp_video_path)
+        except:
+            pass
+            
+        raise HTTPException(status_code=500, detail=f"Video processing failed: {str(e)}")

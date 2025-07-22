@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { translationSessionManager } from '../services/translationSessionManager';
+import { API_CONFIG, WebSocketAPI } from '../services/api';
+import { useTranslationAPI } from '../services/apiHooks';
 
 interface TranslationResult {
   result: string;
@@ -80,24 +82,31 @@ interface ModelOption {
 
 const Translate: React.FC = () => {
   const { user, token, makeAuthenticatedRequest } = useAuth();
+  const { predictVideo: predictVideoAPI } = useTranslationAPI();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameIntervalRef = useRef<number | null>(null);
   
-  // Base URL for API calls
-  const baseUrl = 'http://localhost:8000';
-  const wsUrl = baseUrl.replace('http', 'ws');
+  // API URLs from configuration
+  const baseUrl = API_CONFIG.BASE_URL;
+  const wsUrl = API_CONFIG.WS_URL;
   
   // State management
   const [translationMode, setTranslationMode] = useState<'sign-to-text' | 'text-to-sign'>('sign-to-text');
   const [predictionMode, setPredictionMode] = useState<'sentence' | 'word'>('sentence');
   const [selectedModel, setSelectedModel] = useState('mini-fastsmooth'); // Default to first sentence model
+  const [inputMode, setInputMode] = useState<'camera' | 'video'>('camera'); // New: Camera vs Video upload
   const [detectedText, setDetectedText] = useState('');
   const [targetText, setTargetText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [lastResult, setLastResult] = useState<TranslationResult | null>(null);
+  
+  // Video upload states
+  const [uploadedVideo, setUploadedVideo] = useState<File | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [isVideoUploaded, setIsVideoUploaded] = useState(false);
   
   // Real-time prediction states
   const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
@@ -341,8 +350,8 @@ const Translate: React.FC = () => {
       (selectedModel === 'pro' ? 'pro' : 'mini') : 
       (selectedModel === 'pro-refined' ? 'pro' : 'mini');
     
-    // Direct connection to translate endpoint - match Practice URL pattern
-    const translateWsUrl = `${wsUrl}/translate/live-translate?model_type=${modelType}&prediction_mode=${predictionMode}`;
+    // Direct connection to translate endpoint - using API configuration
+    const translateWsUrl = WebSocketAPI.getLiveTranslateUrl(modelType, predictionMode);
     
     console.log('🏃 TRANSLATE: Attempting WebSocket connection...');
     console.log(`🏃 TRANSLATE: URL: ${translateWsUrl}`);
@@ -716,6 +725,100 @@ const Translate: React.FC = () => {
     setAccumulatedPredictions([]); // Clear accumulated predictions
   };
 
+  // Video upload handlers
+  const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('video/')) {
+      alert('Please select a valid video file.');
+      return;
+    }
+
+    // Validate file size (50MB limit)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      alert('Video file size must be less than 50MB.');
+      return;
+    }
+
+    // Set uploaded video
+    setUploadedVideo(file);
+    
+    // Create preview URL
+    const previewUrl = URL.createObjectURL(file);
+    setVideoPreviewUrl(previewUrl);
+    setIsVideoUploaded(true);
+    
+    console.log('📹 Video uploaded:', file.name, 'Size:', Math.round(file.size / 1024 / 1024), 'MB');
+  };
+
+  const clearVideo = () => {
+    if (videoPreviewUrl) {
+      URL.revokeObjectURL(videoPreviewUrl);
+    }
+    setUploadedVideo(null);
+    setVideoPreviewUrl(null);
+    setIsVideoUploaded(false);
+    
+    // Clear results when changing video
+    clearResults();
+  };
+
+  const processUploadedVideo = async () => {
+    if (!uploadedVideo) return;
+
+    setIsProcessing(true);
+    
+    try {
+      console.log('🎬 Processing uploaded video for sentence prediction...');
+      
+      // Create FormData to send video file
+      const formData = new FormData();
+      formData.append('video', uploadedVideo);
+      formData.append('model_type', selectedModel.includes('pro') ? 'pro' : 'mini');
+      formData.append('prediction_mode', 'sentence');
+
+      // Send to backend for processing using API hook
+      const result = await predictVideoAPI(formData) as any;
+      
+      console.log('✅ Video processing result:', result);
+
+      // Set results
+      const translationResult: TranslationResult = {
+        result: result.predicted_text || result.result || 'No prediction available',
+        confidence: result.confidence || 0,
+        processingTime: result.processing_time || 0,
+        timestamp: new Date(),
+        mode: 'sign-to-text',
+        predictionType: 'sentence',
+        modelUsed: selectedModel
+      };
+
+      setDetectedText(translationResult.result);
+      setLastResult(translationResult);
+
+      // Add to session
+      translationSessionManager.addTranslation({
+        result: translationResult.result,
+        confidence: translationResult.confidence * 100,
+        mode: 'sign-to-text',
+        isCorrect: translationResult.confidence > 0.85
+      });
+
+      // Update recent translations
+      const updatedHistory = translationSessionManager.getRecentTranslations();
+      setRecentTranslations(updatedHistory);
+
+    } catch (error) {
+      console.error('❌ Video processing error:', error);
+      alert('Error processing video. Please try again or check the video format.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -885,139 +988,262 @@ const Translate: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Camera Feed */}
+                {/* Input Mode Selection - Only for Sentence Mode */}
+                {predictionMode === 'sentence' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      <Camera className="inline w-4 h-4 mr-1" />
+                      Input Source
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => setInputMode('camera')}
+                        className={`p-3 rounded-lg border transition-all duration-200 ${
+                          inputMode === 'camera'
+                            ? 'border-green-500 bg-green-50 text-green-700'
+                            : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                        }`}
+                      >
+                        <Camera className="w-5 h-5 mx-auto mb-1" />
+                        <div className="text-sm font-medium">Live Camera</div>
+                        <div className="text-xs">Real-time capture</div>
+                      </button>
+                      <button
+                        onClick={() => setInputMode('video')}
+                        className={`p-3 rounded-lg border transition-all duration-200 ${
+                          inputMode === 'video'
+                            ? 'border-green-500 bg-green-50 text-green-700'
+                            : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                        }`}
+                      >
+                        <Video className="w-5 h-5 mx-auto mb-1" />
+                        <div className="text-sm font-medium">Upload Video</div>
+                        <div className="text-xs">Pre-recorded file</div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Camera Feed / Video Upload Area */}
                 <div className="relative">
-                  <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      muted
-                      className="w-full h-full object-cover"
-                    />
-                    {!isCameraActive && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
-                        <div className="text-center text-white">
-                          <Camera className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                          <p className="text-sm">Camera not active</p>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Live Prediction Overlay - SHOW ALL TOP 4 PREDICTIONS */}
-                    {isLivePredicting && currentPredictions.length > 0 && (
-                      <div className="absolute bottom-4 left-4 right-4">
-                        <div className="bg-black bg-opacity-80 text-white p-4 rounded-lg">
-                          <div className="flex items-center justify-between mb-3">
-                            <span className="text-xs text-gray-300">Live Predictions (Every 20 Frames)</span>
-                            <span className="text-xs text-gray-300">Frames: {capturedFrameCount}</span>
+                  {predictionMode === 'word' || inputMode === 'camera' ? (
+                    /* Camera Feed */
+                    <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        className="w-full h-full object-cover"
+                      />
+                      {!isCameraActive && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+                          <div className="text-center text-white">
+                            <Camera className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">Camera not active</p>
                           </div>
-                          
-                          {/* Display ALL TOP 4 Predictions */}
-                          <div className="space-y-2">
-                            {currentPredictions.slice(0, 4).map((pred, index) => (
-                              <div 
-                                key={`live-${pred.word}-${index}`}
-                                className={`flex justify-between items-center p-2 rounded ${
-                                  index === 0 
-                                    ? 'bg-green-600 bg-opacity-80' 
-                                    : 'bg-white bg-opacity-20'
-                                }`}
-                              >
-                                <div className="flex items-center space-x-2">
-                                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                        </div>
+                      )}
+                      
+                      {/* Live Prediction Overlay - SHOW ALL TOP 4 PREDICTIONS */}
+                      {isLivePredicting && currentPredictions.length > 0 && (
+                        <div className="absolute bottom-4 left-4 right-4">
+                          <div className="bg-black bg-opacity-80 text-white p-4 rounded-lg">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-xs text-gray-300">Live Predictions (Every 20 Frames)</span>
+                              <span className="text-xs text-gray-300">Frames: {capturedFrameCount}</span>
+                            </div>
+                            
+                            {/* Display ALL TOP 4 Predictions */}
+                            <div className="space-y-2">
+                              {currentPredictions.slice(0, 4).map((pred, index) => (
+                                <div 
+                                  key={`live-${pred.word}-${index}`}
+                                  className={`flex justify-between items-center p-2 rounded ${
+                                    index === 0 
+                                      ? 'bg-green-600 bg-opacity-80' 
+                                      : 'bg-white bg-opacity-20'
+                                  }`}
+                                >
+                                  <div className="flex items-center space-x-2">
+                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                      index === 0 
+                                        ? 'bg-white text-green-600' 
+                                        : 'bg-gray-600 text-white'
+                                    }`}>
+                                      {index + 1}
+                                    </span>
+                                    <span className={`font-medium ${
+                                      index === 0 ? 'text-white text-lg' : 'text-gray-200 text-sm'
+                                    }`}>
+                                      {pred.word}
+                                    </span>
+                                    {index === 0 && (
+                                      <span className="text-xs bg-white text-green-600 px-2 py-1 rounded-full font-bold">
+                                        BEST
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className={`font-semibold text-xs px-2 py-1 rounded ${
                                     index === 0 
                                       ? 'bg-white text-green-600' 
                                       : 'bg-gray-600 text-white'
                                   }`}>
-                                    {index + 1}
+                                    {(pred.confidence * 100).toFixed(1)}%
                                   </span>
-                                  <span className={`font-medium ${
-                                    index === 0 ? 'text-white text-lg' : 'text-gray-200 text-sm'
-                                  }`}>
-                                    {pred.word}
-                                  </span>
-                                  {index === 0 && (
-                                    <span className="text-xs bg-white text-green-600 px-2 py-1 rounded-full font-bold">
-                                      BEST
-                                    </span>
-                                  )}
                                 </div>
-                                <span className={`font-semibold text-xs px-2 py-1 rounded ${
-                                  index === 0 
-                                    ? 'bg-white text-green-600' 
-                                    : 'bg-gray-600 text-white'
-                                }`}>
-                                  {(pred.confidence * 100).toFixed(1)}%
-                                </span>
+                              ))}
+                            </div>
+                            
+                            <div className="mt-2 pt-2 border-t border-gray-500 text-xs text-gray-300 text-center">
+                              Real-time GCN Model • Next update in {20 - (capturedFrameCount % 20)} frames
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Connection Status */}
+                      {predictionMode === 'word' && connectionStatus !== 'disconnected' && (
+                        <div className="absolute top-4 right-4">
+                          <div className={`px-2 py-1 rounded-full text-xs ${
+                            connectionStatus === 'connected' 
+                              ? 'bg-green-500 text-white' 
+                              : 'bg-yellow-500 text-black'
+                          }`}>
+                            {connectionStatus === 'connected' ? 'Live' : 'Connecting...'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Video Upload Area */
+                    <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
+                      {!isVideoUploaded ? (
+                        /* Video Upload Zone */
+                        <div className="w-full h-full flex items-center justify-center border-2 border-dashed border-gray-600 bg-gray-800">
+                          <div className="text-center text-white p-8">
+                            <Video className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                            <h3 className="text-lg font-medium mb-2">Upload ASL Video</h3>
+                            <p className="text-sm text-gray-300 mb-4">
+                              Upload a video file to translate ASL sentences
+                            </p>
+                            <input
+                              type="file"
+                              accept="video/*"
+                              onChange={handleVideoUpload}
+                              className="hidden"
+                              id="video-upload"
+                            />
+                            <label
+                              htmlFor="video-upload"
+                              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 cursor-pointer inline-flex items-center"
+                            >
+                              <Video className="w-4 h-4 mr-2" />
+                              Choose Video File
+                            </label>
+                            <p className="text-xs text-gray-400 mt-3">
+                              Supported formats: MP4, WebM, AVI • Max size: 50MB
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Video Preview */
+                        <div className="relative w-full h-full">
+                          <video
+                            src={videoPreviewUrl || undefined}
+                            controls
+                            className="w-full h-full object-cover"
+                            preload="metadata"
+                          />
+                          <div className="absolute top-4 right-4 flex gap-2">
+                            <button
+                              onClick={clearVideo}
+                              className="px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          {isProcessing && (
+                            <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                              <div className="bg-white rounded-lg p-6 text-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                                <p className="text-gray-700">Processing video...</p>
                               </div>
-                            ))}
-                          </div>
-                          
-                          <div className="mt-2 pt-2 border-t border-gray-500 text-xs text-gray-300 text-center">
-                            Real-time GCN Model • Next update in {20 - (capturedFrameCount % 20)} frames
-                          </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
-                    
-                    {/* Connection Status */}
-                    {predictionMode === 'word' && connectionStatus !== 'disconnected' && (
-                      <div className="absolute top-4 right-4">
-                        <div className={`px-2 py-1 rounded-full text-xs ${
-                          connectionStatus === 'connected' 
-                            ? 'bg-green-500 text-white' 
-                            : 'bg-yellow-500 text-black'
-                        }`}>
-                          {connectionStatus === 'connected' ? 'Live' : 'Connecting...'}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Process Video Button */}
+                  {inputMode === 'video' && isVideoUploaded && !isProcessing && (
+                    <div className="mt-4">
+                      <button
+                        onClick={processUploadedVideo}
+                        className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center justify-center"
+                      >
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h8m-7 0a6 6 0 0112 0v1H6v-1z" />
+                        </svg>
+                        Analyze Video for ASL Translation
+                      </button>
+                    </div>
+                  )}
+                  
                   <canvas ref={canvasRef} className="hidden" />
                 </div>
 
-                {/* Camera Controls */}
-                <div className="flex gap-3">
-                  {!isCameraActive ? (
-                    <>
-                      <button
-                        onClick={startCamera}
-                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center justify-center"
-                      >
-                        <Video className="w-4 h-4 mr-2" />
-                        Start Camera
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={stopCamera}
-                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center justify-center"
-                      >
-                        <Square className="w-4 h-4 mr-2" />
-                        Stop Camera
-                      </button>
-                      {!isRecording ? (
+                {/* Camera Controls - Show for word mode or when camera is selected in sentence mode */}
+                {(predictionMode === 'word' || (predictionMode === 'sentence' && inputMode === 'camera')) && (
+                  <div className="flex gap-3">
+                    {!isCameraActive ? (
+                      <>
                         <button
-                          onClick={startPrediction}
-                          disabled={isProcessing}
-                          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                          onClick={startCamera}
+                          className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center justify-center"
                         >
-                          <Zap className="w-4 h-4 mr-2" />
-                          Start {predictionMode === 'word' ? 'Live Detection' : 'Detection'}
+                          <Video className="w-4 h-4 mr-2" />
+                          Start Camera
                         </button>
-                      ) : (
+                      </>
+                    ) : (
+                      <>
                         <button
-                          onClick={stopPrediction}
-                          className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center justify-center"
+                          onClick={stopCamera}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center justify-center"
                         >
                           <Square className="w-4 h-4 mr-2" />
-                          Stop Detection ({capturedFrameCount} frames)
+                          Stop Camera
                         </button>
-                      )}
-                    </>
-                  )}
-                </div>
+                        {!isRecording ? (
+                          <button
+                            onClick={startPrediction}
+                            disabled={isProcessing}
+                            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                          >
+                            <Zap className="w-4 h-4 mr-2" />
+                            Start {predictionMode === 'word' ? 'Live Detection' : 'Detection'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={stopPrediction}
+                            className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center justify-center"
+                          >
+                            <Square className="w-4 h-4 mr-2" />
+                            Stop Detection ({capturedFrameCount} frames)
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Helper text for video upload mode */}
+                {predictionMode === 'sentence' && inputMode === 'video' && !isVideoUploaded && (
+                  <div className="text-center text-sm text-gray-500 mt-2">
+                    Want to use live camera instead? Switch to "Live Camera" mode above.
+                  </div>
+                )}
 
                 {isLivePredicting && predictionMode === 'word' && (
                   <div className="text-center">

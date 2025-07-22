@@ -521,3 +521,58 @@ def predict_video_with_model(video_path: str, model_type: str = "mini") -> List[
             {"word": "Processing", "confidence": 0.000000, "rank": 3},
             {"word": "Video", "confidence": 0.000000, "rank": 4}
         ]
+
+
+def predict_video_sentence(video_path: str, model, prediction_mode: str = "sentence") -> Dict:
+    """
+    Predict video and return result in sentence format for the API endpoint
+    """
+    try:
+        # Get predictions from the model
+        predictions = model.predict_video(video_path)
+        
+        if not predictions:
+            return {
+                "predicted_text": "No prediction available",
+                "confidence": 0.0,
+                "processing_time": 0.0,
+                "frames_processed": 0
+            }
+        
+        if prediction_mode == "sentence":
+            # For sentence mode, combine top predictions into a sentence
+            top_words = []
+            total_confidence = 0.0
+            
+            # Take top 3-5 predictions to form a sentence
+            for pred in predictions[:min(5, len(predictions))]:
+                if pred.get("confidence", 0) > 0.1:  # Only include confident predictions
+                    top_words.append(pred["word"])
+                    total_confidence += pred.get("confidence", 0)
+            
+            if not top_words:
+                predicted_text = predictions[0]["word"]  # Fallback to top prediction
+                confidence = predictions[0].get("confidence", 0.0)
+            else:
+                predicted_text = " ".join(top_words)
+                confidence = total_confidence / len(top_words)  # Average confidence
+        else:
+            # Word mode - just return the top prediction
+            predicted_text = predictions[0]["word"]
+            confidence = predictions[0].get("confidence", 0.0)
+        
+        return {
+            "predicted_text": predicted_text,
+            "confidence": float(confidence),
+            "processing_time": 2.0,  # Approximate processing time
+            "frames_processed": 30   # Approximate frames processed
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in video sentence prediction: {e}")
+        return {
+            "predicted_text": "Processing error",
+            "confidence": 0.0,
+            "processing_time": 0.0,
+            "frames_processed": 0
+        }
