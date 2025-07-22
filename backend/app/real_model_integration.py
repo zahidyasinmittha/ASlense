@@ -8,6 +8,10 @@ Uses the exact same pipeline from ensemble.py and live_fast.py but with video fi
 import os
 import sys
 import cv2
+import torch
+import numpy as np
+import time
+from typing import Dict, List, Optional
 import numpy as np
 import torch
 import tempfile
@@ -523,50 +527,190 @@ def predict_video_with_model(video_path: str, model_type: str = "mini") -> List[
         ]
 
 
-def predict_video_sentence(video_path: str, model, prediction_mode: str = "sentence") -> Dict:
+def predict_video_sentence(video_path: str, model, prediction_mode: str = "sentence", model_type: str = "mini") -> Dict:
     """
-    Predict video and return result in sentence format for the API endpoint
+    Predict video using the same logic as WebSocket sentence mode:
+    1. Process video in 20-frame batches
+    2. Get top-4 word predictions for each batch  
+    3. Send all word groups to LLM for sentence generation
     """
+    import cv2
+    import time
+    from app.services.llm_service import llm_service
+    
+    start_time = time.time()
+    
     try:
-        # Get predictions from the model
-        predictions = model.predict_video(video_path)
-        
-        if not predictions:
+        # Read video file
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
             return {
-                "predicted_text": "No prediction available",
+                "predicted_text": "Could not open video",
                 "confidence": 0.0,
                 "processing_time": 0.0,
                 "frames_processed": 0
             }
         
+        # Collect all frames
+        frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frames.append(frame)
+        
+        cap.release()
+        
+        if len(frames) == 0:
+            return {
+                "predicted_text": "No frames in video",
+                "confidence": 0.0,
+                "processing_time": 0.0,
+                "frames_processed": 0
+            }
+        
+        print(f"📹 Video loaded: {len(frames)} frames")
+        
         if prediction_mode == "sentence":
-            # For sentence mode, combine top predictions into a sentence
-            top_words = []
-            total_confidence = 0.0
+            # SAME LOGIC AS WEBSOCKET SENTENCE MODE
+            sentence_predictions = []  # Will store top-4 predictions for each batch
             
-            # Take top 3-5 predictions to form a sentence
-            for pred in predictions[:min(5, len(predictions))]:
-                if pred.get("confidence", 0) > 0.1:  # Only include confident predictions
-                    top_words.append(pred["word"])
-                    total_confidence += pred.get("confidence", 0)
+            # Process all frames in batches of 20 to get word predictions
+            batch_size = 20
+            total_batches = max(1, len(frames) // batch_size)
             
-            if not top_words:
-                predicted_text = predictions[0]["word"]  # Fallback to top prediction
+            print(f"📊 Processing {len(frames)} frames in {total_batches} batches of {batch_size}")
+            
+            for batch_idx in range(total_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(frames))
+                batch_frames = frames[start_idx:end_idx]
+                
+                if len(batch_frames) < 10:  # Skip small batches
+                    continue
+                    
+                try:
+                    # Extract keypoints from batch frames (same as WebSocket)
+                    keypoints_buffer = []
+                    
+                    for frame in batch_frames:
+                        if frame is not None:
+                            resized_frame = cv2.resize(frame, (384, 288))
+                            kp, _ = model.hrnet_worker(resized_frame, model.hrnet)
+                            if kp is not None:
+                                keypoints_buffer.append(kp)
+                    
+                    if len(keypoints_buffer) >= 5:  # Minimum for processing
+                        # Pad or trim to fixed window size (same as WebSocket)
+                        WINDOW = 60
+                        if len(keypoints_buffer) < WINDOW:
+                            while len(keypoints_buffer) < WINDOW:
+                                keypoints_buffer.append(keypoints_buffer[-1])
+                        else:
+                            keypoints_buffer = keypoints_buffer[-WINDOW:]
+                        
+                        # Process with GCN model (same as WebSocket)
+                        keypoints_array = np.array(keypoints_buffer)
+                        joint, bone = model.proc_skel(keypoints_array)
+                        
+                        # Handle pro vs mini model processing (same as WebSocket)
+                        if model_type == "pro":
+                            def motion_func(d):
+                                m = np.zeros_like(d)
+                                m[:, :, :-1] = d[:, :, 1:] - d[:, :, :-1]
+                                return m
+                            
+                            bank = dict(
+                                joint_data=torch.from_numpy(joint).float(),
+                                bone_data=torch.from_numpy(bone).float(),
+                                joint_motion=torch.from_numpy(motion_func(joint)).float(),
+                                bone_motion=torch.from_numpy(motion_func(bone)).float()
+                            )
+                            
+                            logits = model.fused_logits(model.gcn_models, bank).squeeze(0)
+                        else:
+                            bank = dict(
+                                joint_data=torch.from_numpy(joint).float(),
+                                bone_data=torch.from_numpy(bone).float()
+                            )
+                            
+                            logits = model.fused_logits(bank).squeeze(0)
+                        
+                        # Get TOP 4 predictions for this batch (same as WebSocket)
+                        softmax_probs = torch.softmax(logits, 0)
+                        top_probs, top_ids = torch.topk(softmax_probs, 4)
+                        
+                        batch_top4 = []
+                        for prob, pred_id in zip(top_probs, top_ids):
+                            word = model.label2word.get(pred_id.item(), f"<{pred_id.item()}>")
+                            batch_top4.append(word)
+                        
+                        sentence_predictions.append(batch_top4)
+                        print(f"   Batch {batch_idx + 1}: {batch_top4}")
+                    
+                except Exception as batch_error:
+                    print(f"   Error processing batch {batch_idx + 1}: {batch_error}")
+                    # Skip failed batches (same as WebSocket)
+                    continue
+            
+            # Send all word groups to LLM (same as WebSocket)
+            if sentence_predictions:
+                print(f"🧠 Sending {len(sentence_predictions)} word groups to LLM...")
+                
+                # Use LLM service to generate sentence with model type (EXACT SAME AS WEBSOCKET)
+                llm_result = llm_service.generate_sentence_from_predictions(sentence_predictions, model_type)
+                
+                processing_time = time.time() - start_time
+                
+                if llm_result["success"]:
+                    predicted_sentence = llm_result["sentence"]
+                    confidence = llm_result["confidence"]  # Keep as 0-1 for consistency
+                    
+                    print(f"✅ LLM generated sentence: '{predicted_sentence}'")
+                    
+                    return {
+                        "predicted_text": predicted_sentence,
+                        "confidence": float(confidence),
+                        "processing_time": float(processing_time),
+                        "frames_processed": len(frames),
+                        "word_groups_processed": len(sentence_predictions)
+                    }
+                else:
+                    # No reliable detection (same as WebSocket)
+                    return {
+                        "predicted_text": "Unable to detect clear signs",
+                        "confidence": 0.0,
+                        "processing_time": float(processing_time),
+                        "frames_processed": len(frames)
+                    }
+            else:
+                # No predictions available (same as WebSocket)
+                processing_time = time.time() - start_time
+                return {
+                    "predicted_text": "No clear signs detected",
+                    "confidence": 0.0,
+                    "processing_time": float(processing_time),
+                    "frames_processed": len(frames)
+                }
+        
+        else:
+            # Word mode - return single word prediction
+            predictions = model.predict_video(video_path)
+            processing_time = time.time() - start_time
+            
+            if predictions and len(predictions) > 0:
+                predicted_text = predictions[0]["word"]
                 confidence = predictions[0].get("confidence", 0.0)
             else:
-                predicted_text = " ".join(top_words)
-                confidence = total_confidence / len(top_words)  # Average confidence
-        else:
-            # Word mode - just return the top prediction
-            predicted_text = predictions[0]["word"]
-            confidence = predictions[0].get("confidence", 0.0)
-        
-        return {
-            "predicted_text": predicted_text,
-            "confidence": float(confidence),
-            "processing_time": 2.0,  # Approximate processing time
-            "frames_processed": 30   # Approximate frames processed
-        }
+                predicted_text = "No prediction available"
+                confidence = 0.0
+            
+            return {
+                "predicted_text": predicted_text,
+                "confidence": float(confidence),
+                "processing_time": float(processing_time),
+                "frames_processed": len(frames)
+            }
         
     except Exception as e:
         print(f"❌ Error in video sentence prediction: {e}")

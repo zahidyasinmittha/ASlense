@@ -7,7 +7,7 @@ const WS_URL = BASE_URL.replace('http', 'ws');
 // Create axios instance with default configuration
 const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000, // 30 seconds timeout
+  timeout: 60000, // 60 seconds timeout (increased from 30s for video processing)
   headers: {
     'Content-Type': 'application/json',
   },
@@ -42,6 +42,7 @@ export const API_CONFIG = {
       END_SESSION: (sessionId: string) => `/translate/end-session/${sessionId}`,
       TRANSLATE_TEXT: '/translate/translate',
       VIDEO_PREDICT: '/translate/video-predict',
+      LLM_TEST: '/translate/llm-test',
       LIVE_TRANSLATE_WS: (modelType: string, predictionMode: string) => 
         `${WS_URL}/translate/live-translate?model_type=${modelType}&prediction_mode=${predictionMode}`,
     },
@@ -187,7 +188,8 @@ export const practiceAPI = {
   
   predictVideo: (formData: FormData) => 
     api.post(API_CONFIG.ENDPOINTS.PRACTICE.PREDICT_VIDEO, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000 // 5 minutes for video processing with LLM
     }),
   
   predictFrames: (data: any) => api.post(API_CONFIG.ENDPOINTS.PRACTICE.PREDICT_FRAMES, data),
@@ -212,8 +214,11 @@ export const translateAPI = {
   
   predictVideo: (formData: FormData) => 
     api.post(API_CONFIG.ENDPOINTS.TRANSLATE.VIDEO_PREDICT, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000 // 5 minutes for video processing with LLM
     }),
+  
+  testLLM: () => api.post(API_CONFIG.ENDPOINTS.TRANSLATE.LLM_TEST),
 };
 
 export const learnAPI = {

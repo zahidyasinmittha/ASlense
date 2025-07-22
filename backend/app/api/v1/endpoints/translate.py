@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Query, Form
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -20,6 +20,7 @@ from app.services.user_service import UserService
 from app.schemas import UserProgressUpdate
 from app.inference import run_inference
 from app.real_model_integration import get_pro_model, get_mini_model, predict_video_sentence
+from app.services.llm_service import llm_service
 
 # Import GCN processing functions from real_model_integration
 try:
@@ -181,19 +182,10 @@ async def process_batch_async_optimized(frames, model, model_type, websocket, al
                     # Fallback to simple predictions with DECIMAL confidence
                     predictions = []
             
-            # If no real predictions, use fallback with DECIMAL confidence (0-1)
+            # If no real predictions, return empty predictions instead of fake ones
             if len(predictions) == 0:
-                for i in range(3):  # Top 3 predictions
-                    confidence = random.uniform(0.75, 0.95)  # DECIMAL format 0-1
-                    word = random.choice([
-                        "hello", "thank", "you", "please", "good", "help", 
-                        "yes", "no", "family", "friend", "love", "water"
-                    ])
-                    predictions.append({
-                        "word": word,
-                        "confidence": confidence,  # DECIMAL format 0-1
-                        "rank": i + 1
-                    })
+                print("⚠️ No valid predictions from model - returning empty result")
+                predictions = []
             
             # Send batch result
             await websocket.send_json({
@@ -414,16 +406,18 @@ async def end_translation_session(
                 session_record.accuracy_percentage = (session_record.correct_translations / session_record.translations_count) * 100
         
         # Update user progress
-        user_service = UserService(db)
+        from app.services.user_service import ProgressService
+        progress_service = ProgressService(db)
         translation_count = session_data["translation_count"]
         correct_count = sum(1 for t in session_data["translations"] if t["is_correct"])
         is_accurate_session = (correct_count / translation_count) >= 0.7 if translation_count > 0 else False
         
         progress_update = UserProgressUpdate(
             is_correct=is_accurate_session,
-            practice_time=int((datetime.utcnow() - session_data["started_at"]).total_seconds())
+            practice_time=int((datetime.utcnow() - session_data["started_at"]).total_seconds()),
+            target_word="session_end"
         )
-        user_service.update_progress(current_user.id, progress_update)
+        progress_service.update_progress(current_user.id, progress_update)
         
         db.commit()
         
@@ -468,41 +462,6 @@ async def get_recent_translations(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch history: {str(e)}")
 
-# Simulate translation for demo purposes
-async def simulate_translation(text_input: str, model_type: str, input_mode: str):
-    """Simulate ASL translation for demo purposes."""
-    # Common ASL words and phrases
-    asl_vocabulary = [
-        "hello", "thank you", "please", "sorry", "yes", "no", "good", "bad",
-        "happy", "sad", "love", "family", "friend", "help", "water", "food",
-        "how are you", "nice to meet you", "good morning", "good night",
-        "see you later", "take care", "i love you", "thank you very much"
-    ]
-    
-    # Simulate processing delay
-    await asyncio.sleep(random.uniform(0.5, 2.0))
-    
-    # Generate prediction
-    if input_mode == "word":
-        predicted = random.choice(asl_vocabulary[:16])  # Single words
-    else:
-        predicted = random.choice(asl_vocabulary[16:])  # Phrases
-    
-    # Simulate confidence based on model
-    base_confidence = {
-        "mediapipe": 0.92,
-        "openpose": 0.87,
-        "custom": 0.89
-    }.get(model_type, 0.85)
-    
-    confidence = base_confidence + random.uniform(-0.15, 0.08)
-    confidence = max(0.60, min(0.98, confidence))
-    
-    return {
-        "predicted_text": predicted,
-        "confidence": confidence
-    }
-
 @router.websocket("/live-translate")
 async def websocket_live_translate(
     websocket: WebSocket,
@@ -513,6 +472,9 @@ async def websocket_live_translate(
     WebSocket endpoint for real-time ASL translation - OPTIMIZED to match practice.py exactly
     """
     await websocket.accept()
+    
+    # DEBUG: Log the received model_type parameter
+    print(f"🔍 BACKEND: WebSocket connected with model_type='{model_type}', prediction_mode='{prediction_mode}'")
     
     try:
         # Validate model type
@@ -804,14 +766,114 @@ async def websocket_live_translate(
                     
                     # Final prediction for sentence mode or final result for word mode
                     if prediction_mode == "sentence" and frame_buffer:
-                        # Simulate sentence processing
-                        await asyncio.sleep(random.uniform(1.0, 3.0))
+                        print(f"🧠 BACKEND: Starting sentence mode LLM processing...")
                         
-                        predicted_sentence = random.choice(sentence_vocabulary)
-                        confidence = random.uniform(80, 95)
-                        processing_time = random.randint(1500, 4000)
+                        # Collect accumulated predictions from all 20-frame batches
+                        sentence_predictions = []  # Will store top-4 predictions for each batch
                         
-                        # DEBUGGING: Print final result being sent
+                        # Process all frames in batches of 20 to get word predictions
+                        batch_size = 20
+                        total_batches = max(1, len(frame_buffer) // batch_size)
+                        
+                        print(f"📊 Processing {len(frame_buffer)} frames in {total_batches} batches of {batch_size}")
+                        
+                        for batch_idx in range(total_batches):
+                            start_idx = batch_idx * batch_size
+                            end_idx = min(start_idx + batch_size, len(frame_buffer))
+                            batch_frames = frame_buffer[start_idx:end_idx]
+                            
+                            if len(batch_frames) < 10:  # Skip small batches
+                                continue
+                                
+                            try:
+                                # Extract keypoints from batch frames
+                                keypoints_buffer = []
+                                
+                                for frame in batch_frames:
+                                    if frame is not None:
+                                        resized_frame = cv2.resize(frame, (384, 288))
+                                        kp, _ = model.hrnet_worker(resized_frame, model.hrnet)
+                                        if kp is not None:
+                                            keypoints_buffer.append(kp)
+                                
+                                if len(keypoints_buffer) >= 5:  # Minimum for processing
+                                    # Pad or trim to fixed window size
+                                    WINDOW = 60
+                                    if len(keypoints_buffer) < WINDOW:
+                                        while len(keypoints_buffer) < WINDOW:
+                                            keypoints_buffer.append(keypoints_buffer[-1])
+                                    else:
+                                        keypoints_buffer = keypoints_buffer[-WINDOW:]
+                                    
+                                    # Process with GCN model
+                                    keypoints_array = np.array(keypoints_buffer)
+                                    joint, bone = model.proc_skel(keypoints_array)
+                                    
+                                    if model_type == "pro":
+                                        def motion_func(d):
+                                            m = np.zeros_like(d)
+                                            m[:, :, :-1] = d[:, :, 1:] - d[:, :, :-1]
+                                            return m
+                                        
+                                        bank = dict(
+                                            joint_data=torch.from_numpy(joint).float(),
+                                            bone_data=torch.from_numpy(bone).float(),
+                                            joint_motion=torch.from_numpy(motion_func(joint)).float(),
+                                            bone_motion=torch.from_numpy(motion_func(bone)).float()
+                                        )
+                                        
+                                        logits = model.fused_logits(model.gcn_models, bank).squeeze(0)
+                                    else:
+                                        bank = dict(
+                                            joint_data=torch.from_numpy(joint).float(),
+                                            bone_data=torch.from_numpy(bone).float()
+                                        )
+                                        
+                                        logits = model.fused_logits(bank).squeeze(0)
+                                    
+                                    # Get TOP 4 predictions for this batch
+                                    softmax_probs = torch.softmax(logits, 0)
+                                    top_probs, top_ids = torch.topk(softmax_probs, 4)
+                                    
+                                    batch_top4 = []
+                                    for prob, pred_id in zip(top_probs, top_ids):
+                                        word = model.label2word.get(pred_id.item(), f"<{pred_id.item()}>")
+                                        batch_top4.append(word)
+                                    
+                                    sentence_predictions.append(batch_top4)
+                                    print(f"   Batch {batch_idx + 1}: {batch_top4}")
+                                
+                            except Exception as batch_error:
+                                print(f"   Error processing batch {batch_idx + 1}: {batch_error}")
+                                # Skip failed batches instead of using fallback words
+                                continue
+                        
+                        # If we have predictions, send to LLM
+                        if sentence_predictions:
+                            print(f"🧠 Sending {len(sentence_predictions)} word groups to LLM...")
+                            
+                            # Use LLM service to generate sentence with model type
+                            llm_result = llm_service.generate_sentence_from_predictions(sentence_predictions, model_type)
+                            
+                            if llm_result["success"]:
+                                predicted_sentence = llm_result["sentence"]
+                                confidence = llm_result["confidence"] * 100  # Convert to percentage
+                                processing_time = int(llm_result["processing_time"] * 1000)  # Convert to ms
+                                
+                                print(f"✅ LLM generated sentence: '{predicted_sentence}'")
+                            else:
+                                # No fallback - inform user that detection failed
+                                predicted_sentence = "Unable to detect clear signs"
+                                confidence = 0.0  # Honest about failure
+                                processing_time = 2000
+                                print(f"❌ LLM failed, no reliable detection available")
+                        else:
+                            # No predictions available - be honest about it
+                            predicted_sentence = "No clear signs detected"
+                            confidence = 0.0  # Honest confidence
+                            processing_time = 1000
+                        
+                        # Send final result
                         print(f"🟡 BACKEND: Sending final sentence result to frontend:")
                         print(f"   Sentence: '{predicted_sentence}' | Confidence: {confidence:.1f}% | Frames: {len(frame_buffer)}")
                         
@@ -823,7 +885,8 @@ async def websocket_live_translate(
                                 "processing_time": processing_time,
                                 "model_used": model_type,
                                 "prediction_mode": prediction_mode,
-                                "frames_processed": len(frame_buffer)
+                                "frames_processed": len(frame_buffer),
+                                "word_groups_processed": len(sentence_predictions)
                             }
                         })
                     
@@ -902,8 +965,8 @@ async def websocket_live_translate(
 @router.post("/video-predict")
 async def predict_video(
     video: UploadFile = File(...),
-    model_type: str = Query(default="mini", description="Model type: 'mini' or 'pro'"),
-    prediction_mode: str = Query(default="sentence", description="Prediction mode: 'word' or 'sentence'"),
+    model_type: str = Form(default="mini", description="Model type: 'mini' or 'pro'"),
+    prediction_mode: str = Form(default="sentence", description="Prediction mode: 'word' or 'sentence'"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -943,7 +1006,7 @@ async def predict_video(
         print(f"🤖 Using {model_type} model for video prediction")
         
         # Process video with the model
-        result = predict_video_sentence(temp_video_path, model, prediction_mode)
+        result = predict_video_sentence(temp_video_path, model, prediction_mode, model_type)
         
         # Clean up temporary file
         try:
@@ -956,15 +1019,14 @@ async def predict_video(
         # Create translation session entry
         translation_session = TranslationSession(
             user_id=current_user.id,
-            mode='sign-to-text',
-            prediction_type=prediction_mode,
-            model_used=model_type,
-            start_time=datetime.utcnow(),
-            end_time=datetime.utcnow(),
-            total_duration=timedelta(seconds=result.get('processing_time', 0)),
-            frames_processed=result.get('frames_processed', 0),
-            words_detected=1 if result.get('predicted_text') else 0,
-            accuracy_score=result.get('confidence', 0.0)
+            model_type=model_type,
+            input_mode=prediction_mode,
+            started_at=datetime.utcnow(),
+            ended_at=datetime.utcnow(),
+            session_duration=int(result.get('processing_time', 0)),
+            translations_count=1,
+            total_confidence=result.get('confidence', 0.0),
+            average_confidence=result.get('confidence', 0.0)
         )
         
         db.add(translation_session)
@@ -976,26 +1038,32 @@ async def predict_video(
             translation_history = TranslationHistory(
                 session_id=translation_session.id,
                 user_id=current_user.id,
-                input_type='video',
-                source_text='[Video Upload]',
-                translated_text=result['predicted_text'],
-                confidence_score=result.get('confidence', 0.0),
+                predicted_text=result['predicted_text'],
+                confidence=result.get('confidence', 0.0),
                 model_used=model_type,
-                processing_time=result.get('processing_time', 0.0),
+                input_mode=prediction_mode,
                 created_at=datetime.utcnow()
             )
             db.add(translation_history)
             db.commit()
         
         # Update user progress
-        user_service = UserService(db)
-        progress_data = UserProgressUpdate(
-            total_translations=1,
-            total_time_spent=int(result.get('processing_time', 0)),
-            accuracy_improvement=result.get('confidence', 0.0),
-            words_learned=1 if result.get('predicted_text') else 0
-        )
-        user_service.update_user_progress(current_user.id, progress_data)
+        try:
+            from app.services.user_service import ProgressService
+            progress_service = ProgressService(db)
+            progress_data = UserProgressUpdate(
+                is_correct=result.get('confidence', 0.0) > 0.5,  # Consider > 50% confidence as correct
+                practice_time=int(result.get('processing_time', 0)),
+                target_word=result.get('predicted_text', 'video_upload')
+            )
+            
+            progress_service.update_progress(current_user.id, progress_data)
+            print("✅ User progress updated successfully")
+                
+        except Exception as progress_error:
+            print(f"❌ Error updating user progress: {str(progress_error)}")
+            # Don't fail the entire request if progress update fails
+            pass
         
         return {
             "success": True,
@@ -1019,3 +1087,35 @@ async def predict_video(
             pass
             
         raise HTTPException(status_code=500, detail=f"Video processing failed: {str(e)}")
+
+@router.post("/llm-test")
+async def test_llm_service(model_type: str = "mini"):
+    """
+    Test endpoint for LLM service
+    """
+    try:
+        # Test with sample predictions
+        test_predictions = [
+            ["hello", "hi", "hey", "greet"],
+            ["how", "what", "where", "when"],
+            ["are", "is", "am", "be"],
+            ["you", "they", "we", "me"]
+        ]
+        
+        result = llm_service.generate_sentence_from_predictions(test_predictions, model_type)
+        
+        return {
+            "success": True,
+            "llm_service_working": result["success"],
+            "test_sentence": result["sentence"],
+            "test_confidence": result["confidence"],
+            "processing_time": result["processing_time"],
+            "frame_batches_processed": result["frame_batches_processed"]
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "llm_service_working": False
+        }
