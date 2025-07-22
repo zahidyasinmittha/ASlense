@@ -35,12 +35,12 @@ except ImportError as e:
 router = APIRouter()
 
 # Performance constants - EXACT MATCH with practice.py
-BATCH_SIZE = 10  # Reduced for faster processing
-FRAME_SKIP = 1   # Process every 2nd frame for speed (restored to previous)
+BATCH_SIZE = 20  # Reduced for faster processing
+FRAME_SKIP = 4   # Process every 2nd frame for speed (restored to previous)
 MAX_BUFFER_SIZE = 400  # Reduced memory usage
-HRNET_BATCH_SIZE = 8  # Process HRNet in batches
+HRNET_BATCH_SIZE = 10  # Process HRNet in batches
 MEMORY_CLEANUP_INTERVAL = 50  # Clean memory every N frames
-ASYNC_PROCESSING_THRESHOLD = 10  # Start async processing after N frames
+ASYNC_PROCESSING_THRESHOLD = 20  # Start async processing after N frames
 
 def optimize_memory_usage():
     """
@@ -650,10 +650,12 @@ async def websocket_live_translate(
                             
                             # For word mode: Send live prediction every 20 frames using REAL GCN MODEL
                             if prediction_mode == "word" and frame_count % 20 == 0:
+                                print(f"🔵 BACKEND: Triggering live prediction at frame {frame_count}")
                                 # Use real GCN model processing like Practice module
                                 try:
                                     # Process recent frames (last 10 frames) for live prediction
                                     recent_frames = frame_buffer[-10:] if len(frame_buffer) >= 10 else frame_buffer
+                                    print(f"   Processing {len(recent_frames)} recent frames from buffer of {len(frame_buffer)}")
                                     
                                     if len(recent_frames) >= 5 and model and hasattr(model, 'hrnet_worker'):  # Need minimum frames
                                         # Extract keypoints from recent frames
@@ -665,6 +667,9 @@ async def websocket_live_translate(
                                                 kp, _ = model.hrnet_worker(resized_frame, model.hrnet)
                                                 if kp is not None:
                                                     keypoints_buffer.append(kp)
+                                                    print(f"   ✓ Keypoints extracted: shape={kp.shape if hasattr(kp, 'shape') else 'unknown'}")
+                                                else:
+                                                    print(f"   ⚠️ No keypoints extracted from frame")
                                         
                                         if len(keypoints_buffer) >= 5:  # Minimum for processing
                                             try:
@@ -718,17 +723,23 @@ async def websocket_live_translate(
                                                     word = model.label2word.get(pred_id.item(), f"<{pred_id.item()}>")
                                                     confidence = prob.item()
                                                     
+                                                    # DEBUGGING: Print detailed prediction info
+                                                    print(f"   RANK {rank}: ID={pred_id.item()} -> WORD='{word}' | CONF={confidence:.4f}")
+                                                    
                                                     top_4_predictions.append({
                                                         "word": word,
                                                         "confidence": confidence,
                                                         "rank": rank
                                                     })
                                                 
-                                                # DEBUGGING: Print real GCN predictions
+                                                # DEBUGGING: Print real GCN predictions with ID mapping
                                                 print(f"🟢 BACKEND: Sending REAL GCN predictions #{frame_count//20} to frontend:")
+                                                print(f"   Total keypoints processed: {len(keypoints_buffer)}")
+                                                print(f"   Logits shape: {logits.shape if hasattr(logits, 'shape') else 'unknown'}")
                                                 for pred in top_4_predictions:
                                                     print(f"   #{pred['rank']}: '{pred['word']}' | Confidence: {pred['confidence']:.3f}")
                                                 print(f"   Frame: {frame_count}")
+                                                print(f"   Model type: {model_type}")
                                                 
                                                 await websocket.send_json({
                                                     "type": "live_prediction",

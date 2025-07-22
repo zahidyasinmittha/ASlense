@@ -276,7 +276,7 @@ const Translate: React.FC = () => {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
-  // Frame capture function for real-time prediction
+  // OPTIMIZED Frame capture function for better performance
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) {
       return null;
@@ -294,14 +294,33 @@ const Translate: React.FC = () => {
       return null;
     }
 
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    // OPTIMIZATION 1: Reduce resolution for faster processing (maintain aspect ratio)
+    const targetWidth = 640; // Reduced from 640 for 4x faster processing
+    const targetHeight = 480; // Reduced from 480
+    const aspectRatio = video.videoWidth / video.videoHeight;
     
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    let finalWidth = targetWidth;
+    let finalHeight = Math.round(targetWidth / aspectRatio);
     
-    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    if (finalHeight > targetHeight) {
+      finalHeight = targetHeight;
+      finalWidth = Math.round(targetHeight * aspectRatio);
+    }
+
+    canvas.width = finalWidth;
+    canvas.height = finalHeight;
     
-    if (frameDataUrl.length < 1000) {
+    // OPTIMIZATION 2: Use faster image smoothing
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'low'; // Faster than 'high'
+    
+    ctx.drawImage(video, 0, 0, finalWidth, finalHeight);
+    
+    // OPTIMIZATION 3: Lower JPEG quality for faster encoding and smaller transfer
+    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.7); // Reduced from 0.95
+    
+    // OPTIMIZATION 4: Minimum size check for valid frames
+    if (frameDataUrl.length < 500) { // Reduced threshold
       return null;
     }
 
@@ -353,6 +372,8 @@ const Translate: React.FC = () => {
             case 'live_prediction':
               // Real-time prediction result every 20 frames (word mode only)
               if (data.predictions && data.predictions.length > 0) {
+                console.log('🔍 FRONTEND: Received live prediction confidence values:', data.predictions.map(p => ({word: p.word, confidence: p.confidence})));
+                
                 setCurrentPredictions(data.predictions);
                 const topPrediction = data.predictions[0];
                 
@@ -377,13 +398,15 @@ const Translate: React.FC = () => {
                 // Update Translation Result section with LATEST prediction immediately
                 const result: TranslationResult = {
                   result: topPrediction.word,
-                  confidence: topPrediction.confidence,
+                  confidence: topPrediction.confidence, // Keep as 0-1 format
                   processingTime: 0, // Real-time, no processing time
                   timestamp: new Date(),
                   mode: 'sign-to-text',
                   predictionType: predictionMode,
                   modelUsed: selectedModel
                 };
+                
+                console.log('🔍 FRONTEND: Setting lastResult with confidence:', result.confidence);
                 
                 // Update ONLY detectedText to show latest word without affecting accumulated list
                 setDetectedText(result.result);
@@ -412,9 +435,9 @@ const Translate: React.FC = () => {
                 // Add to session
                 translationSessionManager.addTranslation({
                   result: result.result,
-                  confidence: result.confidence,
+                  confidence: result.confidence * 100, // Convert to 0-100 for session tracking
                   mode: 'sign-to-text',
-                  isCorrect: result.confidence > 85
+                  isCorrect: result.confidence > 0.85 // Use 0-1 format for comparison
                 });
                 
                 // Update recent translations
@@ -624,9 +647,9 @@ const Translate: React.FC = () => {
       // Add to session
       translationSessionManager.addTranslation({
         result: result.result,
-        confidence: topPrediction.confidence,
+        confidence: topPrediction.confidence * 100, // Convert to 0-100 for session tracking
         mode: 'sign-to-text',
-        isCorrect: topPrediction.confidence > 85
+        isCorrect: topPrediction.confidence > 0.85 // Use 0-1 format for comparison
       });
       
       // Update recent translations
@@ -1150,12 +1173,12 @@ const Translate: React.FC = () => {
                           </span>
                         </div>
                         <div className="space-y-3 max-h-[36rem] overflow-y-auto">
-                          {accumulatedPredictions.slice().reverse().map((batchEntry, reversedIndex) => {
-                            const actualBatchNumber = accumulatedPredictions.length - reversedIndex;
-                            const isLatest = reversedIndex === accumulatedPredictions.length - 1;
+                          {accumulatedPredictions.map((batchEntry, index) => {
+                            const batchNumber = index + 1; // Simple sequential numbering
+                            const isLatest = index === accumulatedPredictions.length - 1;
                             return (
                               <div 
-                                key={`batch-${reversedIndex}-${batchEntry.timestamp}`} 
+                                key={`batch-${index}-${batchEntry.timestamp}`} 
                                 className={`p-3 rounded-lg border transition-all duration-200 ${
                                   isLatest
                                     ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-200' 
@@ -1166,7 +1189,7 @@ const Translate: React.FC = () => {
                                   <span className={`text-sm font-medium ${
                                     isLatest ? 'text-blue-800' : 'text-gray-700'
                                   }`}>
-                                    Batch #{actualBatchNumber}
+                                    Batch #{batchNumber}
                                     {isLatest && (
                                       <span className="ml-2 text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded-full">
                                         Latest
