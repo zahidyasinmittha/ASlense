@@ -5,18 +5,37 @@ const About: React.FC = () => {
   const technologies = [
     { name: 'React', icon: '⚛️', description: 'Modern UI framework', color: 'blue' },
     { name: 'TypeScript', icon: '🔷', description: 'Type-safe development', color: 'blue' },
-    { name: 'Tailwind CSS', icon: '🎨', description: 'Utility-first CSS', color: 'cyan' },
+    { name: 'FastAPI', icon: '🚀', description: 'High-performance Python API', color: 'green' },
+    { name: 'PyTorch', icon: '🔥', description: 'AI/ML framework', color: 'orange' },
+    { name: 'Three.js', icon: '🎮', description: '3D graphics and visualization', color: 'yellow' },
+    { name: 'Blender', icon: '🎨', description: '3D modeling and animation', color: 'orange' },
+    { name: 'LangChain', icon: '🔗', description: 'LLM application framework', color: 'purple' },
     { name: 'MediaPipe', icon: '🤖', description: 'ML gesture recognition', color: 'green' },
-    { name: 'OpenPose', icon: '🎯', description: 'Human pose estimation', color: 'purple' },
-    { name: 'WebRTC', icon: '📹', description: 'Real-time communication', color: 'red' },
+    { name: 'OpenCV', icon: '👁️', description: 'Computer vision library', color: 'purple' },
+    { name: 'Groq LLM', icon: '🧠', description: 'Advanced language processing', color: 'cyan' },
+    { name: 'SQLite', icon: '💾', description: 'Lightweight database', color: 'gray' },
+    { name: 'SQLAlchemy', icon: '🗄️', description: 'Database ORM', color: 'indigo' },
+    { name: 'Ngrok', icon: '🌐', description: 'Secure tunneling service', color: 'blue' },
+    { name: 'Vercel', icon: '▲', description: 'Cloud deployment platform', color: 'black' },
+    { name: 'WebSocket', icon: '⚡', description: 'Real-time communication', color: 'red' },
   ];
 
-  const teamMembers = [
-    { name: 'Sarah Johnson', role: 'Lead Developer', avatar: '👩‍💻', color: 'blue' },
-    { name: 'Michael Chen', role: 'ML Engineer', avatar: '👨‍🔬', color: 'green' },
-    { name: 'Emma Rodriguez', role: 'UX Designer', avatar: '👩‍🎨', color: 'purple' },
-    { name: 'David Kim', role: 'ASL Consultant', avatar: '👨‍🏫', color: 'orange' },
-  ];
+  const creator = {
+    name: 'Zahid Mittha',
+    role: 'Creator of ASLense',
+    avatar: '👨‍💻',
+    color: 'blue',
+    cgpa: '3.85/4',
+    bio: 'Passionate AI and software engineer with a CGPA of 3.85/4, known for combining innovation with social impact. He is the creator of ASLense, an intelligent sign language interpretation system for the deaf and mute community. Zahid has represented his university at multiple national and regional competitions, including the prestigious NUMS Competition, and is a former university-level cricketer. With strong experience in machine learning, computer vision, NLP, and full-stack development, Zahid continues to develop inclusive solutions that make a real difference in people\'s lives.',
+    achievements: [
+      '🏆 Represented university at prestigious NUMS Competition',
+      '🏏 Former university-level cricketer',
+      '🤖 Expert in Machine Learning & Computer Vision',
+      '💻 Full-stack developer with NLP expertise',
+      '🌟 Multiple national & regional competition participant'
+    ],
+    expertise: ['Machine Learning', 'Computer Vision', 'NLP', 'Full-Stack Development', 'PyTorch', 'React', 'FastAPI', 'AI Research']
+  };
 
   const values = [
     {
@@ -28,22 +47,22 @@ const About: React.FC = () => {
     {
       icon: Lightbulb,
       title: 'Innovation',
-      description: 'We continuously push the boundaries of what\'s possible with AI and machine learning.',
+      description: 'We push the boundaries with dual AI models, agentic LLM pipelines, and real-time processing for the best ASL recognition experience.',
       color: 'yellow'
     },
     {
       icon: Users,
       title: 'Community',
-      description: 'We work closely with the deaf community to ensure our solutions meet real needs.',
+      description: 'Built with the deaf community in mind, featuring user authentication, progress tracking, and admin dashboards for comprehensive learning management.',
       color: 'green'
     }
   ];
 
   const stats = [
-    { number: '500+', label: 'ASL Signs Supported', icon: '🤟', color: 'blue' },
-    { number: '10,000+', label: 'Active Users', icon: '👥', color: 'purple' },
-    { number: '95%', label: 'Recognition Accuracy', icon: '🎯', color: 'green' },
-    { number: '24/7', label: 'Availability', icon: '⏰', color: 'red' },
+    { number: '2200+', label: 'ASL Signs Supported', icon: '🤟', color: 'blue' },
+    { number: '5 Models', label: 'AI Processing Options', icon: '🧠', color: 'purple' },
+    { number: '95%+', label: 'Recognition Accuracy', icon: '🎯', color: 'green' },
+    { number: 'Real-time & sentence-level', label: 'Live Processing', icon: '⚡', color: 'red' },
   ];
 
   const floatingElements = [
@@ -74,9 +93,10 @@ const About: React.FC = () => {
             </div>
             <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">Our Mission</h1>
             <p className="text-xl text-gray-600 leading-relaxed">
-              ASLense is dedicated to breaking down communication barriers between the deaf and hearing communities. 
-              We leverage cutting-edge AI technology to make American Sign Language more accessible, 
-              creating a world where everyone can communicate effectively regardless of their hearing abilities.
+              ASLense is an AI-powered American Sign Language learning and translation platform that combines 
+              computer vision, machine learning, and modern web technologies. We provide interactive, 
+              real-time sign language recognition with both mini (fast) and pro (accurate) AI models, 
+              creating an inclusive communication bridge for the deaf and hearing communities.
             </p>
              {floatingElements.map((element, i) => (
             <div
@@ -112,9 +132,9 @@ const About: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
-              { emoji: '📹', title: 'Capture', description: 'Our system uses your device\'s camera to capture hand movements and gestures in real-time.', color: 'blue' },
-              { emoji: '🧠', title: 'Analyze', description: 'Advanced machine learning models analyze the gestures and identify the corresponding signs.', color: 'purple' },
-              { emoji: '💬', title: 'Translate', description: 'The system converts the recognized signs into text, enabling seamless communication.', color: 'green' }
+              { emoji: '📹', title: 'Capture', description: 'Upload videos or use live camera to capture ASL gestures with our real-time WebSocket processing.', color: 'blue' },
+              { emoji: '🧠', title: 'AI Analysis', description: 'Choose between Mini (fast) or Pro (accurate) models. Pro uses agentic pipeline with Groq LLM for enhanced sentence generation.', color: 'purple' },
+              { emoji: '💬', title: 'Translate', description: 'Get real-time word and sentence predictions with confidence scores, plus detailed analytics and progress tracking.', color: 'green' }
             ].map((step, index) => (
               <div
                 key={index}
@@ -141,7 +161,7 @@ const About: React.FC = () => {
         <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16 animate-fade-in-up">
             <div className="relative group mb-6">
-              <div className="absolute -inset-2 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+              <div className="absolute -inset-2 blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
               <Zap className="relative h-12 w-12 text-yellow-500 mx-auto animate-bounce" />
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Powered by Modern Technology</h2>
@@ -150,7 +170,7 @@ const About: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
             {technologies.map((tech, index) => (
               <div
                 key={index}
@@ -174,36 +194,69 @@ const About: React.FC = () => {
         </div>
       </section>
 
-      {/* Team */}
-      <section className="py-20 bg-white">
-        <div className="max-w-[90vw]  mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Creator */}
+      <section className="py-20 bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+        <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16 animate-fade-in-up">
             <div className="relative group mb-6">
-              <div className="absolute -inset-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
-              <Users className="relative h-12 w-12 text-blue-600 mx-auto animate-pulse" />
+              <div className="absolute -inset-2 blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+              <Users className="relative h-12 w-12 text-blue-500 mx-auto animate-bounce" />
             </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Meet Our Team</h2>
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Meet the Creator</h2>
             <p className="text-xl text-gray-600">
-              Passionate individuals working to bridge communication gaps
+              The visionary behind ASLense
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {teamMembers.map((member, index) => (
-              <div
-                key={index}
-                className={`group text-center p-6 bg-gradient-to-br from-${member.color}-50 to-${member.color}-100 rounded-2xl hover:shadow-xl transition-all duration-500 transform hover:scale-105 animate-fade-in-up`}
-                style={{ animationDelay: `${index * 150}ms` }}
-              >
-                <div className={`bg-gradient-to-br from-${member.color}-400 to-${member.color}-600 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300 shadow-lg`}>
-                  <span className="text-4xl">{member.avatar}</span>
+          <div className="flex justify-center">
+            <div className="max-w-2xl w-full">
+              <div className="group bg-white rounded-2xl shadow-xl p-8 hover:shadow-2xl transition-all duration-500 transform hover:scale-105 animate-fade-in-up border border-gray-100">
+                <div className="text-center mb-6">
+                  <div className="relative mx-auto mb-6">
+                    <div className={`absolute -inset-2 blur opacity-25 group-hover:opacity-40 transition duration-1000`}></div>
+                    <div className="relative w-32 h-32 rounded-full mx-auto bg-gradient-to-r from-blue-400 to-purple-600 flex items-center justify-center border-4 border-white shadow-lg">
+                      <span className="text-6xl">{creator.avatar}</span>
+                    </div>
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">{creator.name}</h3>
+                  <p className={`text-lg font-semibold bg-gradient-to-r from-${creator.color}-500 to-purple-600 bg-clip-text text-transparent mb-2`}>
+                    {creator.role}
+                  </p>
+                  <p className="text-sm text-gray-500 font-medium">CGPA: {creator.cgpa}</p>
                 </div>
-                <h3 className={`text-lg font-semibold text-${member.color}-900 mb-2 group-hover:text-${member.color}-700 transition-colors duration-300`}>
-                  {member.name}
-                </h3>
-                <p className={`text-${member.color}-700`}>{member.role}</p>
+
+                <div className="space-y-6">
+                  <p className="text-gray-600 leading-relaxed text-center">
+                    {creator.bio}
+                  </p>
+
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-3 text-center">🏆 Key Achievements</h4>
+                    <div className="space-y-2">
+                      {creator.achievements.map((achievement, idx) => (
+                        <div key={idx} className="flex items-center justify-center text-sm text-gray-600">
+                          <span className="text-center">{achievement}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-3 text-center">💻 Technical Expertise</h4>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {creator.expertise.map((skill, idx) => (
+                        <span
+                          key={idx}
+                          className={`px-3 py-1 text-xs font-medium rounded-full bg-gradient-to-r from-${creator.color}-500 to-purple-600 text-white shadow-sm`}
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </section>
@@ -213,7 +266,7 @@ const About: React.FC = () => {
         <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16 animate-fade-in-up">
             <div className="relative group mb-6">
-              <div className="absolute -inset-2 bg-gradient-to-r from-red-500 to-pink-500 rounded-full blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+              <div className="absolute -inset-2 blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
               <Heart className="relative h-16 w-16 text-red-500 mx-auto animate-pulse" />
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Our Values</h2>
@@ -252,7 +305,7 @@ const About: React.FC = () => {
         <div className="max-w-[90vw] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16 animate-fade-in-up">
             <div className="relative group mb-6">
-              <div className="absolute -inset-2 bg-gradient-to-r from-green-500 to-blue-500 rounded-full blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+              <div className="absolute -inset-2 blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
               <Award className="relative h-12 w-12 text-green-600 mx-auto animate-bounce" />
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Making a Difference</h2>
