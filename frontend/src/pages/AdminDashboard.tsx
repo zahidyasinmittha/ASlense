@@ -50,6 +50,27 @@ interface Video {
   createdAt: string;
 }
 
+interface PSLAlphabetEntry {
+  id: number;
+  letter: string;
+  file_path: string;
+  label: string;
+  difficulty: string;
+  description?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CreatePSLEntry {
+  letter: string;
+  file_path: string;
+  label: string;
+  difficulty: string;
+  description?: string;
+  is_active: boolean;
+}
+
 interface SystemMetrics {
   predictionAccuracy: number;
   averageSessionTime: number;
@@ -65,14 +86,19 @@ const AdminDashboard: React.FC = () => {
   console.log('AdminDashboard - Current user:', user);
   console.log('AdminDashboard - Is admin:', isAdmin);
   console.log('AdminDashboard - Token exists:', !!token);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'videos' | 'metrics' | 'tools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'videos' | 'psl' | 'metrics' | 'tools'>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
+  const [pslEntries, setPslEntries] = useState<PSLAlphabetEntry[]>([]);
+  const [filteredPslEntries, setFilteredPslEntries] = useState<PSLAlphabetEntry[]>([]);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pslLoading, setPslLoading] = useState(false);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [showPslModal, setShowPslModal] = useState(false);
+  const [editingPslEntry, setEditingPslEntry] = useState<PSLAlphabetEntry | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [createUserData, setCreateUserData] = useState<CreateUserData>({
     username: '',
@@ -82,7 +108,21 @@ const AdminDashboard: React.FC = () => {
     role: 'user'
   });
   const [editUserData, setEditUserData] = useState<EditUserData>({});
+  const [pslFormData, setPslFormData] = useState<CreatePSLEntry>({
+    letter: '',
+    file_path: '',
+    label: '',
+    difficulty: 'easy',
+    description: '',
+    is_active: true
+  });
   const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [pslSearchTerm, setPslSearchTerm] = useState('');
+  const [pslDifficultyFilter, setPslDifficultyFilter] = useState('');
+  const [pslStatusFilter, setPslStatusFilter] = useState('all');
+  const [pslPage, setPslPage] = useState(1);
+  const [pslHasMore, setPslHasMore] = useState(true);
+  const [pslLoadingMore, setPslLoadingMore] = useState(false);
   const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'admin' | 'user'>('all');
   const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -237,6 +277,220 @@ const AdminDashboard: React.FC = () => {
     });
     setShowEditUserModal(true);
   };
+
+  // PSL Management Functions
+  const fetchPslEntries = async (page: number = 1, append: boolean = false) => {
+    try {
+      if (page === 1) {
+        setPslLoading(true);
+      } else {
+        setPslLoadingMore(true);
+      }
+      
+      const params = new URLSearchParams({
+        skip: ((page - 1) * 20).toString(),
+        limit: '20'
+      });
+      
+      // Add search parameter if exists
+      if (pslSearchTerm) {
+        params.append('search', pslSearchTerm);
+      }
+      
+      // Add filter parameters if exists
+      if (pslDifficultyFilter) {
+        params.append('difficulty', pslDifficultyFilter);
+      }
+      
+      if (pslStatusFilter !== 'all') {
+        params.append('is_active', pslStatusFilter === 'active' ? 'true' : 'false');
+      }
+      
+      const response = await fetch(`/api/v1/psl-alphabet/admin/all?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (append && page > 1) {
+          // Append new entries for infinite scroll
+          setPslEntries(prev => [...prev, ...data]);
+          setFilteredPslEntries(prev => [...prev, ...data]);
+        } else {
+          // Replace entries for initial load or refresh
+          setPslEntries(data);
+          setFilteredPslEntries(data);
+        }
+        
+        // Check if there are more entries to load
+        setPslHasMore(data.length === 20);
+      } else {
+        showNotification('error', 'Failed to fetch PSL alphabet entries');
+      }
+    } catch (error) {
+      console.error('Error fetching PSL entries:', error);
+      showNotification('error', 'Error fetching PSL alphabet entries');
+    } finally {
+      if (page === 1) {
+        setPslLoading(false);
+      } else {
+        setPslLoadingMore(false);
+      }
+    }
+  };
+
+  const loadMorePslEntries = async () => {
+    if (pslLoadingMore || !pslHasMore) return;
+    
+    const nextPage = pslPage + 1;
+    setPslPage(nextPage);
+    await fetchPslEntries(nextPage, true);
+  };
+
+  const handleCreatePsl = async () => {
+    try {
+      const response = await fetch('/api/v1/psl-alphabet/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(pslFormData)
+      });
+
+      if (response.ok) {
+        showNotification('success', 'PSL alphabet entry created successfully');
+        setShowPslModal(false);
+        resetPslForm();
+        fetchPslEntries();
+      } else {
+        const error = await response.json();
+        showNotification('error', error.detail || 'Failed to create entry');
+      }
+    } catch (error) {
+      console.error('Error creating PSL entry:', error);
+      showNotification('error', 'Error creating PSL alphabet entry');
+    }
+  };
+
+  const handleUpdatePsl = async () => {
+    if (!editingPslEntry) return;
+
+    try {
+      const response = await fetch(`/api/v1/psl-alphabet/${editingPslEntry.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(pslFormData)
+      });
+
+      if (response.ok) {
+        showNotification('success', 'PSL alphabet entry updated successfully');
+        setShowPslModal(false);
+        setEditingPslEntry(null);
+        resetPslForm();
+        fetchPslEntries();
+      } else {
+        const error = await response.json();
+        showNotification('error', error.detail || 'Failed to update entry');
+      }
+    } catch (error) {
+      console.error('Error updating PSL entry:', error);
+      showNotification('error', 'Error updating PSL alphabet entry');
+    }
+  };
+
+  const handleDeletePsl = async (id: number, letter: string) => {
+    if (!confirm(`Are you sure you want to delete the PSL entry for letter "${letter}"?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/v1/psl-alphabet/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        showNotification('success', 'PSL alphabet entry deleted successfully');
+        fetchPslEntries();
+      } else {
+        showNotification('error', 'Failed to delete entry');
+      }
+    } catch (error) {
+      console.error('Error deleting PSL entry:', error);
+      showNotification('error', 'Error deleting PSL alphabet entry');
+    }
+  };
+
+  const togglePslStatus = async (id: number) => {
+    try {
+      const response = await fetch(`/api/v1/psl-alphabet/${id}/toggle-status`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        showNotification('success', 'Entry status updated successfully');
+        fetchPslEntries();
+      } else {
+        showNotification('error', 'Failed to update entry status');
+      }
+    } catch (error) {
+      console.error('Error updating PSL entry status:', error);
+      showNotification('error', 'Error updating entry status');
+    }
+  };
+
+  const handleEditPsl = (entry: PSLAlphabetEntry) => {
+    setEditingPslEntry(entry);
+    setPslFormData({
+      letter: entry.letter,
+      file_path: entry.file_path,
+      label: entry.label,
+      difficulty: entry.difficulty,
+      description: entry.description || '',
+      is_active: entry.is_active
+    });
+    setShowPslModal(true);
+  };
+
+  const resetPslForm = () => {
+    setPslFormData({
+      letter: '',
+      file_path: '',
+      label: '',
+      difficulty: 'easy',
+      description: '',
+      is_active: true
+    });
+  };
+
+  // Filter PSL entries based on search and filters
+  React.useEffect(() => {
+    // When filters change, reset pagination and fetch fresh data
+    if (activeTab === 'psl') {
+      setPslPage(1);
+      setPslHasMore(true);
+      fetchPslEntries(1, false);
+    }
+  }, [pslSearchTerm, pslDifficultyFilter, pslStatusFilter]);
+
+  // Load PSL entries when tab is active
+  React.useEffect(() => {
+    if (activeTab === 'psl' && pslEntries.length === 0) {
+      fetchPslEntries();
+    }
+  }, [activeTab, token]);
 
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.username.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
@@ -398,6 +652,7 @@ const AdminDashboard: React.FC = () => {
               { id: 'overview', label: 'Overview', icon: '📊', color: 'blue' },
               { id: 'users', label: 'User Management', icon: '👥', color: 'green' },
               { id: 'videos', label: 'Video Management', icon: '🎥', color: 'purple' },
+              { id: 'psl', label: 'PSL Alphabet', icon: '🤟', color: 'indigo' },
               { id: 'metrics', label: 'System Metrics', icon: '📈', color: 'orange' },
               { id: 'tools', label: 'Admin Tools', icon: '🛠️', color: 'gray' }
             ].map((tab) => (
@@ -860,6 +1115,175 @@ const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* PSL Alphabet Management Tab */}
+        {activeTab === 'psl' && (
+          <div className="bg-white rounded-lg shadow-md border border-gray-200">
+            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center">
+                <div className="bg-indigo-500 rounded-lg p-2 mr-3">
+                  <span className="text-white text-lg">🤟</span>
+                </div>
+                PSL Alphabet Management
+              </h3>
+              <button 
+                onClick={() => {
+                  setPslFormData({
+                    letter: '',
+                    file_path: '',
+                    label: '',
+                    difficulty: 'easy',
+                    description: '',
+                    is_active: true
+                  });
+                  setEditingPslEntry(null);
+                  setShowPslModal(true);
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-300 flex items-center space-x-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                <span>Add New Entry</span>
+              </button>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex flex-col lg:flex-row gap-4 items-center">
+                <div className="relative flex-1">
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Search letters, labels, or files..."
+                    value={pslSearchTerm}
+                    onChange={(e) => setPslSearchTerm(e.target.value)}
+                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent w-full"
+                  />
+                </div>
+
+                <select
+                  value={pslDifficultyFilter}
+                  onChange={(e) => setPslDifficultyFilter(e.target.value)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">All Difficulties</option>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+
+                <select
+                  value={pslStatusFilter}
+                  onChange={(e) => setPslStatusFilter(e.target.value)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="all">All Status</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              {pslLoading ? (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+                  <p className="mt-2 text-gray-600">Loading PSL entries...</p>
+                </div>
+              ) : filteredPslEntries.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <span className="text-2xl">🤟</span>
+                  </div>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">No PSL entries found</h4>
+                  <p className="text-gray-500">Add your first PSL alphabet entry to get started</p>
+                </div>
+              ) : (
+                <div 
+                  className="grid grid-cols-1 gap-4 max-h-96 overflow-y-auto pr-2"
+                  onScroll={(e) => {
+                    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                    // Load more when scrolled to bottom
+                    if (scrollHeight - scrollTop === clientHeight && pslHasMore && !pslLoadingMore) {
+                      loadMorePslEntries();
+                    }
+                  }}
+                >
+                  {filteredPslEntries.map((entry) => (
+                    <div key={entry.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-all duration-300">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-4">
+                          <div className="w-16 h-16 bg-indigo-500 rounded-lg flex items-center justify-center">
+                            <span className="text-white text-xl font-bold">{entry.letter.charAt(0)}</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-bold text-gray-800">{entry.letter}</h4>
+                            <p className="text-gray-600 text-sm">
+                              {entry.label} • 
+                              <span className={`ml-1 px-2 py-1 rounded-full text-xs font-semibold ${
+                                entry.difficulty === 'easy' ? 'bg-green-100 text-green-800' :
+                                entry.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {entry.difficulty}
+                              </span>
+                            </p>
+                            <p className="text-gray-500 text-xs">File: {entry.file_path}</p>
+                            {entry.description && (
+                              <p className="text-gray-500 text-xs mt-1">{entry.description}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => togglePslStatus(entry.id)}
+                            className={`px-3 py-1 rounded text-xs font-medium transition-all duration-300 ${
+                              entry.is_active
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                : 'bg-red-100 text-red-700 hover:bg-red-200'
+                            }`}
+                          >
+                            {entry.is_active ? 'Active' : 'Inactive'}
+                          </button>
+                          <button 
+                            onClick={() => handleEditPsl(entry)}
+                            className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm font-medium hover:bg-blue-200 transition-all duration-300"
+                          >
+                            Edit
+                          </button>
+                          <button 
+                            onClick={() => handleDeletePsl(entry.id, entry.letter)}
+                            className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-medium hover:bg-red-200 transition-all duration-300"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {/* Loading More Indicator */}
+                  {pslLoadingMore && (
+                    <div className="text-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mx-auto"></div>
+                      <p className="mt-2 text-sm text-gray-600">Loading more entries...</p>
+                    </div>
+                  )}
+                  
+                  {/* End of Results Indicator */}
+                  {!pslHasMore && filteredPslEntries.length > 0 && (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-gray-500">No more entries to load</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* System Metrics Tab */}
         {activeTab === 'metrics' && (
           <div className="space-y-8">
@@ -1169,6 +1593,133 @@ const AdminDashboard: React.FC = () => {
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300"
               >
                 Update User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PSL Add/Edit Modal */}
+      {showPslModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">
+                {editingPslEntry ? 'Edit PSL Entry' : 'Add New PSL Entry'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowPslModal(false);
+                  setEditingPslEntry(null);
+                  resetPslForm();
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Letter
+                </label>
+                <input
+                  type="text"
+                  value={pslFormData.letter}
+                  onChange={(e) => setPslFormData({...pslFormData, letter: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Alif"
+                  maxLength={50}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Label
+                </label>
+                <input
+                  type="text"
+                  value={pslFormData.label}
+                  onChange={(e) => setPslFormData({...pslFormData, label: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Alif"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  File Path
+                </label>
+                <input
+                  type="text"
+                  value={pslFormData.file_path}
+                  onChange={(e) => setPslFormData({...pslFormData, file_path: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Alif-Original_s0251-02alif.jpg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Difficulty
+                </label>
+                <select
+                  value={pslFormData.difficulty}
+                  onChange={(e) => setPslFormData({...pslFormData, difficulty: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description (Optional)
+                </label>
+                <textarea
+                  value={pslFormData.description}
+                  onChange={(e) => setPslFormData({...pslFormData, description: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  rows={3}
+                  placeholder="How to sign this letter..."
+                />
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="psl_is_active"
+                  checked={pslFormData.is_active}
+                  onChange={(e) => setPslFormData({...pslFormData, is_active: e.target.checked})}
+                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label htmlFor="psl_is_active" className="ml-2 block text-sm text-gray-700">
+                  Active
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowPslModal(false);
+                  setEditingPslEntry(null);
+                  resetPslForm();
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={editingPslEntry ? handleUpdatePsl : handleCreatePsl}
+                className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <span>{editingPslEntry ? 'Update' : 'Create'}</span>
               </button>
             </div>
           </div>

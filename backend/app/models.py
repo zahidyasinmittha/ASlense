@@ -127,3 +127,16 @@ class TranslationHistory(Base):
     
     # Relationships
     session = relationship("TranslationSession", back_populates="translations")
+
+class PSLAlphabet(Base):
+    __tablename__ = "psl_alphabet"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    letter = Column(String(50), unique=True, index=True, nullable=False)  # Increased length for PSL letters
+    file_path = Column(String, nullable=False)
+    label = Column(String(100), nullable=False)  # Increased length for PSL labels
+    difficulty = Column(String, nullable=False)  # easy, medium, hard
+    description = Column(Text)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    is_active = Column(Boolean, default=True)

@@ -8,7 +8,8 @@ from app.auth import require_admin
 from app.schemas import (
     User, UserCreate, UserUpdate, AdminDashboard, 
     PredictionHistoryResponse, AdminLogResponse,
-    Video, VideoCreate, VideoUpdate
+    Video, VideoCreate, VideoUpdate,
+    PSLAlphabet, PSLAlphabetCreate, PSLAlphabetUpdate
 )
 from app.services.user_service import UserService, AdminService, PredictionService
 from app.models import User as UserModel, Video as VideoModel
@@ -525,4 +526,36 @@ async def get_video_stats(
         "total_videos": total_videos,
         "by_category": {category: count for category, count in videos_by_category if category},
         "by_difficulty": {difficulty: count for difficulty, count in videos_by_difficulty if difficulty}
+    }
+
+# PSL Alphabet Admin Management
+@router.get("/psl-alphabet/stats")
+async def get_psl_alphabet_stats(
+    admin_user: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Get PSL alphabet statistics (admin only)."""
+    from app.models import PSLAlphabet
+    
+    total_entries = db.query(func.count(PSLAlphabet.id)).scalar() or 0
+    active_entries = db.query(func.count(PSLAlphabet.id)).filter(PSLAlphabet.is_active == True).scalar() or 0
+    
+    # Group by difficulty
+    entries_by_difficulty = db.query(
+        PSLAlphabet.difficulty,
+        func.count(PSLAlphabet.id)
+    ).group_by(PSLAlphabet.difficulty).all()
+    
+    admin_service = AdminService(db)
+    admin_service.log_admin_action(
+        admin_id=admin_user.id,
+        action="VIEW_PSL_ALPHABET_STATS",
+        details="Viewed PSL alphabet statistics"
+    )
+    
+    return {
+        "total_entries": total_entries,
+        "active_entries": active_entries,
+        "inactive_entries": total_entries - active_entries,
+        "by_difficulty": {difficulty: count for difficulty, count in entries_by_difficulty if difficulty}
     }

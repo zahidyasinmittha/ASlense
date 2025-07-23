@@ -7,7 +7,8 @@ from app.api.v1.endpoints import (
     learn,
     practice,
     translate,
-    admin
+    admin,
+    psl_alphabet
 )
 
 api_router = APIRouter()
@@ -20,3 +21,4 @@ api_router.include_router(learn.router, prefix="/learn", tags=["learning"])
 api_router.include_router(practice.router, prefix="/practice", tags=["practice"])
 api_router.include_router(translate.router, prefix="/translate", tags=["translation"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(psl_alphabet.router, prefix="/psl-alphabet", tags=["psl-alphabet"])

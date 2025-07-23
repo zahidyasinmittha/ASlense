@@ -198,5 +198,33 @@ class Video(VideoBase):
     class Config:
         from_attributes = True
 
+# PSL Alphabet Schemas
+class PSLAlphabetBase(BaseModel):
+    letter: str
+    file_path: str
+    label: str
+    difficulty: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+class PSLAlphabetCreate(PSLAlphabetBase):
+    pass
+
+class PSLAlphabetUpdate(BaseModel):
+    letter: Optional[str] = None
+    file_path: Optional[str] = None
+    label: Optional[str] = None
+    difficulty: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class PSLAlphabet(PSLAlphabetBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 # Update forward references
 UserWithProgress.model_rebuild()
