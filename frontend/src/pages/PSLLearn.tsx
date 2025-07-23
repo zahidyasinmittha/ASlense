@@ -144,12 +144,6 @@ const PSLLearn: React.FC = () => {
   const mediumLetters = getUniqueLetters('medium');
   const hardLetters = getUniqueLetters('hard');
 
-  // Debug logging
-  console.log('PSL Entries loaded:', pslEntries.length);
-  console.log('Easy letters:', easyLetters.length, easyLetters.map(e => e.letter.split('_')[0]));
-  console.log('Medium letters:', mediumLetters.length, mediumLetters.map(e => e.letter.split('_')[0]));
-  console.log('Hard letters:', hardLetters.length, hardLetters.map(e => e.letter.split('_')[0]));
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center">
