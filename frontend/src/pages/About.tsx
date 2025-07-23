@@ -29,7 +29,6 @@ const About: React.FC = () => {
     bio: 'Passionate AI and software engineer with a CGPA of 3.85/4, known for combining innovation with social impact. He is the creator of ASLense, an intelligent sign language interpretation system for the deaf and mute community. Zahid has represented his university at multiple national and regional competitions, including the prestigious NUMS Competition, and is a former university-level cricketer. With strong experience in machine learning, computer vision, NLP, and full-stack development, Zahid continues to develop inclusive solutions that make a real difference in people\'s lives.',
     achievements: [
       '🏆 Represented university at prestigious NUMS Competition',
-      '🏏 Former university-level cricketer',
       '🤖 Expert in Machine Learning & Computer Vision',
       '💻 Full-stack developer with NLP expertise',
       '🌟 Multiple national & regional competition participant'
