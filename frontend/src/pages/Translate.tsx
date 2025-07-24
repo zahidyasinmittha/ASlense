@@ -91,10 +91,6 @@ const Translate: React.FC = () => {
   const baseUrl = API_CONFIG.BASE_URL;
   const wsUrl = API_CONFIG.WS_URL;
   
-  // LLM Test state
-  const [llmTestResult, setLlmTestResult] = useState<string>('');
-  const [isTestingLLM, setIsTestingLLM] = useState(false);
-  
   // State management
   const [translationMode, setTranslationMode] = useState<'sign-to-text' | 'text-to-sign'>('sign-to-text');
   const [predictionMode, setPredictionMode] = useState<'sentence' | 'word'>('sentence');
@@ -154,10 +150,8 @@ const Translate: React.FC = () => {
   // Reset selected model when prediction mode changes
   useEffect(() => {
     if (predictionMode === 'sentence') {
-      console.log(`🔄 FRONTEND: useEffect - predictionMode changed to 'sentence', setting selectedModel to 'mini-fastsmooth'`);
       setSelectedModel('mini-fastsmooth'); // Default to first sentence model
     } else {
-      console.log(`🔄 FRONTEND: useEffect - predictionMode changed to 'word', setting selectedModel to 'mini'`);
       setSelectedModel('mini'); // Default to first word model
     }
   }, [predictionMode]);
@@ -356,27 +350,12 @@ const Translate: React.FC = () => {
       (selectedModel === 'pro' ? 'pro' : 'mini') : 
       (selectedModel === 'pro-refined' ? 'pro' : 'mini');
     
-    // DEBUG: Log the model selection logic
-    console.log(`🔍 FRONTEND: selectedModel='${selectedModel}', predictionMode='${predictionMode}', calculated modelType='${modelType}'`);
-    
     // Direct connection to translate endpoint - using API configuration
     const translateWsUrl = WebSocketAPI.getLiveTranslateUrl(modelType, predictionMode);
-    
-    console.log('🏃 TRANSLATE: Attempting WebSocket connection...');
-    console.log(`🏃 TRANSLATE: URL: ${translateWsUrl}`);
-    console.log(`🏃 TRANSLATE: Base URL: ${baseUrl}`);
-    console.log(`🏃 TRANSLATE: WS URL: ${wsUrl}`);
-    console.log(`🏃 TRANSLATE: Model: ${modelType}`);
-    console.log(`🏃 TRANSLATE: Mode: ${predictionMode}`);
-    console.log(`🔍 FRONTEND: Full URL being used for WebSocket: ${translateWsUrl}`);
-    console.log(`🔍 FRONTEND: URL parameters - model_type=${modelType}&prediction_mode=${predictionMode}`);
     
     const ws = new WebSocket(translateWsUrl);
     
     ws.onopen = () => {
-      console.log('✅ TRANSLATE: WebSocket connected successfully!');
-      console.log(`🔍 FRONTEND: Connected to WebSocket with URL: ${translateWsUrl}`);
-      console.log(`🔍 FRONTEND: Expected backend to receive model_type='${modelType}', prediction_mode='${predictionMode}'`);
       setConnectionStatus('connected');
       setWsConnection(ws);
     };
@@ -384,18 +363,18 @@ const Translate: React.FC = () => {
     ws.onmessage = (event) => {
       try {
         const data: LivePredictionMessage = JSON.parse(event.data);
-        console.log('📥 TRANSLATE: Received message:', data);
           
           switch (data.type) {
             case 'connected':
-              console.log('🔗 TRANSLATE: Connection confirmed by server');
+              break;
+              
+            case 'frame_received':
+              setCapturedFrameCount(data.frame_count || 0);
               break;
               
             case 'live_prediction':
               // Real-time prediction result every 20 frames (word mode only)
               if (data.predictions && data.predictions.length > 0) {
-                console.log('🔍 FRONTEND: Received live prediction confidence values:', data.predictions.map(p => ({word: p.word, confidence: p.confidence})));
-                
                 setCurrentPredictions(data.predictions);
                 const topPrediction = data.predictions[0];
                 
@@ -427,8 +406,6 @@ const Translate: React.FC = () => {
                   predictionType: predictionMode,
                   modelUsed: selectedModel
                 };
-                
-                console.log('🔍 FRONTEND: Setting lastResult with confidence:', result.confidence);
                 
                 // Update ONLY detectedText to show latest word without affecting accumulated list
                 setDetectedText(result.result);
@@ -469,23 +446,19 @@ const Translate: React.FC = () => {
               break;
               
             case 'error':
-              console.log('❌ TRANSLATE: Server error:', data.message);
               break;
           }
         } catch (error) {
-          console.error('❌ TRANSLATE: Error parsing WebSocket message:', error);
+          // Error parsing WebSocket message
         }
       };
       
-      ws.onclose = (event) => {
-        console.log('🔌 TRANSLATE: WebSocket closed:', event.code, event.reason);
+      ws.onclose = () => {
         setConnectionStatus('disconnected');
         setWsConnection(null);
       };
       
-      ws.onerror = (error) => {
-        console.error('❌ TRANSLATE: WebSocket error:', error);
-        console.log('❌ TRANSLATE: WebSocket state:', ws.readyState);
+      ws.onerror = () => {
         setConnectionStatus('disconnected');
       };
     
@@ -582,8 +555,6 @@ const Translate: React.FC = () => {
   const startPrediction = async () => {
     if (!isCameraActive || isRecording) return;
     
-    console.log(`🚀 FRONTEND: Starting prediction with selectedModel='${selectedModel}', predictionMode='${predictionMode}'`);
-    
     setIsRecording(true);
     setIsLivePredicting(true);
     setLiveResult('');
@@ -608,7 +579,7 @@ const Translate: React.FC = () => {
       }
     }
     
-    // Start sending frames - match Practice section timing exactly (150ms)
+    // Start sending frames - match backend 400ms processing interval
     let frameCount = 0;
     frameIntervalRef.current = window.setInterval(() => {
       if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
@@ -627,13 +598,8 @@ const Translate: React.FC = () => {
           frame: frameDataUrl,
           prediction_mode: predictionMode
         }));
-        
-        // Log every 20th frame to avoid spam
-        if (frameCount % 20 === 0) {
-          console.log(`📤 FRONTEND: Sent frame ${frameCount} to backend with prediction_mode='${predictionMode}'`);
-        }
       }
-    }, 150); // Match Practice section: capture frame every 150ms
+    }, 150); // Match backend 400ms processing interval for better accuracy
   };
 
   const stopPrediction = () => {
@@ -652,7 +618,6 @@ const Translate: React.FC = () => {
     
     // Send stop message to WebSocket for final processing (especially for sentence mode)
     if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-      console.log(`🛑 FRONTEND: Sending stop message for ${predictionMode} mode processing`);
       wsConnection.send(JSON.stringify({
         type: 'stop'
       }));
@@ -771,8 +736,6 @@ const Translate: React.FC = () => {
     const previewUrl = URL.createObjectURL(file);
     setVideoPreviewUrl(previewUrl);
     setIsVideoUploaded(true);
-    
-    console.log('📹 Video uploaded:', file.name, 'Size:', Math.round(file.size / 1024 / 1024), 'MB');
   };
 
   const clearVideo = () => {
@@ -793,31 +756,19 @@ const Translate: React.FC = () => {
     setIsProcessing(true);
     
     try {
-      console.log('🎬 Processing uploaded video for sentence prediction...');
-      
       // Create FormData to send video file
       const formData = new FormData();
       formData.append('video', uploadedVideo);
       formData.append('model_type', selectedModel.includes('pro') ? 'pro' : 'mini');
       formData.append('prediction_mode', 'sentence');
       
-      // Log the form data being sent
-      const modelTypeValue = selectedModel.includes('pro') ? 'pro' : 'mini';
-      console.log(`📤 FRONTEND: Video upload - selectedModel='${selectedModel}', calculated model_type='${modelTypeValue}'`);
-      console.log(`📤 FRONTEND: Video upload FormData:`);
-      console.log(`   - video: ${uploadedVideo.name} (${Math.round(uploadedVideo.size / 1024 / 1024)}MB)`);
-      console.log(`   - model_type: ${modelTypeValue}`);
-      console.log(`   - prediction_mode: sentence`);
-
-      // Show processing message with estimated time
+      // Track processing time
       const startTime = Date.now();
-      console.log('⏳ Video processing started - this may take up to 5 minutes for LLM analysis...');
-
+      
       // Send to backend for processing using API hook
       const result = await predictVideoAPI(formData) as any;
       
       const processingTime = (Date.now() - startTime) / 1000;
-      console.log(`✅ Video processing completed in ${processingTime.toFixed(1)}s:`, result);
 
       // Set results
       const translationResult: TranslationResult = {
@@ -846,7 +797,7 @@ const Translate: React.FC = () => {
       setRecentTranslations(updatedHistory);
 
     } catch (error) {
-      console.error('❌ Video processing error:', error);
+      console.error('Video processing error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
       if (errorMessage.includes('timeout')) {
@@ -856,43 +807,6 @@ const Translate: React.FC = () => {
       }
     } finally {
       setIsProcessing(false);
-    }
-  };
-
-  // Test LLM service function
-  const testLLMService = async () => {
-    setIsTestingLLM(true);
-    setLlmTestResult('');
-    
-    try {
-      console.log('🧠 FRONTEND: Testing LLM service...');
-      console.log(`🧠 FRONTEND: Current selectedModel='${selectedModel}', will determine test model type`);
-      
-      const testModelType = selectedModel.includes('pro') ? 'pro' : 'mini';
-      console.log(`🧠 FRONTEND: Testing with model_type='${testModelType}'`);
-      
-      const response = await translateAPI.testLLM();
-      const result = response.data as {
-        success: boolean;
-        llm_service_working?: boolean;
-        test_sentence?: string;
-        test_confidence?: number;
-        error?: string;
-      };
-      
-      console.log('✅ FRONTEND: LLM test result:', result);
-      
-      if (result.success && result.llm_service_working) {
-        setLlmTestResult(`✅ LLM Working! Test sentence: "${result.test_sentence}" (Confidence: ${Math.round((result.test_confidence || 0) * 100)}%)`);
-      } else {
-        setLlmTestResult(`❌ LLM Test Failed: ${result.error || 'Unknown error'}`);
-      }
-      
-    } catch (error) {
-      console.error('❌ LLM test error:', error);
-      setLlmTestResult(`❌ LLM Test Error: ${error}`);
-    } finally {
-      setIsTestingLLM(false);
     }
   };
 
@@ -1008,7 +922,6 @@ const Translate: React.FC = () => {
                           value={model.id}
                           checked={selectedModel === model.id}
                           onChange={(e) => {
-                            console.log(`🔄 FRONTEND: Model changed from '${selectedModel}' to '${e.target.value}'`);
                             setSelectedModel(e.target.value);
                           }}
                           className="sr-only"
@@ -1034,44 +947,6 @@ const Translate: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Test LLM Button - Only for Sentence Mode */}
-                {predictionMode === 'sentence' && (
-                  <div>
-                    <button
-                      onClick={testLLMService}
-                      disabled={isTestingLLM || isProcessing}
-                      className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
-                    >
-                      {isTestingLLM ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          Testing LLM...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          Test LLM Service
-                        </>
-                      )}
-                    </button>
-                    <p className="text-xs text-gray-500 mt-1 text-center">
-                      Test if FastSmooth-ASL LLM is working correctly
-                    </p>
-                    {/* LLM Test Result Display */}
-                    {llmTestResult && (
-                      <div className={`mt-3 p-3 rounded-lg text-sm ${
-                        llmTestResult.includes('✅') 
-                          ? 'bg-green-50 text-green-700 border border-green-200' 
-                          : 'bg-red-50 text-red-700 border border-red-200'
-                      }`}>
-                        {llmTestResult}
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {/* Prediction Mode Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-3">
@@ -1081,7 +956,6 @@ const Translate: React.FC = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       onClick={() => {
-                        console.log(`🔄 FRONTEND: Prediction mode changed from '${predictionMode}' to 'sentence'`);
                         setPredictionMode('sentence');
                       }}
                       className={`p-3 rounded-lg border transition-all duration-200 ${
@@ -1096,7 +970,6 @@ const Translate: React.FC = () => {
                     </button>
                     <button
                       onClick={() => {
-                        console.log(`🔄 FRONTEND: Prediction mode changed from '${predictionMode}' to 'word'`);
                         setPredictionMode('word');
                       }}
                       className={`p-3 rounded-lg border transition-all duration-200 ${

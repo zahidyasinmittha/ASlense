@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Camera, StopCircle, Play, Zap, Award, Target, RefreshCw, CheckCircle, XCircle, Timer } from 'lucide-react';
+import { Camera, StopCircle, Play, Zap, Award, Target, RefreshCw, CheckCircle, XCircle, Timer, Upload } from 'lucide-react';
+import { usePSLWebSocket } from '../hooks/usePSLWebSocket';
 
 interface PredictionResult {
   letter: string;
@@ -21,6 +22,7 @@ interface ModelConfig {
 const PSLPractice: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>('ps-mini');
   const [isRecording, setIsRecording] = useState(false);
+  const [cameraStarted, setCameraStarted] = useState(false);
   const [predictions, setPredictions] = useState<PredictionResult[]>([]);
   const [currentPrediction, setCurrentPrediction] = useState<PredictionResult | null>(null);
   const [sessionStats, setSessionStats] = useState({
@@ -32,86 +34,32 @@ const PSLPractice: React.FC = () => {
   const [targetLetter, setTargetLetter] = useState<string>('');
   const [practiceMode, setPracticeMode] = useState<'free' | 'guided'>('free');
   const [processingTime, setProcessingTime] = useState<number>(0);
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [testImage, setTestImage] = useState<string | null>(null);
+  const [testPrediction, setTestPrediction] = useState<PredictionResult | null>(null);
+  const [frameCount, setFrameCount] = useState<number>(0);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const frameIntervalRef = useRef<number | null>(null);
 
-  const models: ModelConfig[] = [
-    {
-      id: 'ps-mini',
-      name: 'PS Mini',
-      description: 'Fast inference with high accuracy',
-      accuracy: 98,
-      speed: 'fast',
-      color: 'bg-green-500',
-      icon: <Zap className="h-5 w-5" />,
-      processingTime: 150
-    },
-    {
-      id: 'ps-pro',
-      name: 'PS Pro',
-      description: 'Premium accuracy with optimal speed',
-      accuracy: 99,
-      speed: 'medium',
-      color: 'bg-blue-500',
-      icon: <Award className="h-5 w-5" />,
-      processingTime: 300
-    }
-  ];
-
-  const commonPSLLetters = [
-    'Alif', 'Bay', 'Pay', 'Tay', 'Taay', 'Say', 'Chay', 'Khay', 'Dal', '1-Hay',
-    'Daal', 'Ray', 'Zay', 'Seen', 'Sheen', 'Suad', 'Tuey', 'Ain', 'Ghain',
-    'Fay', 'Kaf', 'Lam', 'Meem', 'Nuun', 'Wao'
-  ];
-
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' }
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-      }
-    } catch (error) {
-      console.error('Error accessing camera:', error);
-      alert('Error accessing camera. Please ensure camera permissions are granted.');
-    }
-  }, []);
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  }, []);
-
-  const simulatePrediction = useCallback(() => {
-    const model = models.find(m => m.id === selectedModel);
-    if (!model) return;
-
-    const startTime = Date.now();
-    
-    setTimeout(() => {
-      // Simulate model prediction
-      const randomLetter = commonPSLLetters[Math.floor(Math.random() * commonPSLLetters.length)];
-      const baseConfidence = model.accuracy / 100;
-      const confidence = Math.min(0.99, baseConfidence + (Math.random() * 0.1 - 0.05));
-      
-      const prediction: PredictionResult = {
-        letter: randomLetter,
-        confidence: confidence,
-        timestamp: Date.now()
+  // WebSocket connection for real-time PSL prediction
+  const pslWebSocket = usePSLWebSocket({
+    modelType: selectedModel === 'ps-mini' ? 'ps_mini' : 'ps_pro',
+    onPrediction: (prediction) => {
+      const result: PredictionResult = {
+        letter: prediction.letter,
+        confidence: prediction.confidence,
+        timestamp: prediction.timestamp
       };
 
-      setCurrentPrediction(prediction);
-      setPredictions(prev => [prediction, ...prev.slice(0, 9)]);
-      setProcessingTime(Date.now() - startTime);
+      setCurrentPrediction(result);
+      setPredictions(prev => [result, ...prev.slice(0, 7)]);
+      
+      // If this is from a test image, also set test prediction
+      if (testImage) {
+        setTestPrediction(result);
+      }
 
       // Update stats if in guided mode
       if (practiceMode === 'guided' && targetLetter) {
@@ -131,26 +79,191 @@ const PSLPractice: React.FC = () => {
           }, 2000);
         }
       }
-    }, model.processingTime);
-  }, [selectedModel, practiceMode, targetLetter, models, commonPSLLetters]);
+    },
+    onError: (error) => {
+      console.error('PSL WebSocket error:', error);
+      setConnectionStatus('disconnected');
+    },
+    onConnected: () => {
+      setConnectionStatus('connected');
+    }
+  });
 
-  const toggleRecording = async () => {
-    if (!isRecording) {
-      await startCamera();
-      setIsRecording(true);
-      // Start continuous prediction
-      const interval = setInterval(() => {
-        if (videoRef.current && videoRef.current.readyState === 4) {
-          simulatePrediction();
-        }
-      }, 1000);
-      
-      // Store interval in a ref or state to clear it later
-      (window as any).predictionInterval = interval;
+  // Sync connection status with WebSocket hook state
+  React.useEffect(() => {
+    if (pslWebSocket.isConnected) {
+      setConnectionStatus('connected');
+    } else if (pslWebSocket.isConnecting) {
+      setConnectionStatus('connecting');
     } else {
-      setIsRecording(false);
-      stopCamera();
-      clearInterval((window as any).predictionInterval);
+      setConnectionStatus('disconnected');
+    }
+  }, [pslWebSocket.isConnected, pslWebSocket.isConnecting]);
+
+  const models: ModelConfig[] = [
+    {
+      id: 'ps-mini',
+      name: 'PS Mini',
+      description: 'Fast inference with high accuracy',
+      accuracy: 98,
+      speed: 'fast',
+      color: 'bg-green-500',
+      icon: <Zap className="h-5 w-5" />,
+      processingTime: 400
+    },
+    {
+      id: 'ps-pro',
+      name: 'PS Pro',
+      description: 'Premium accuracy with optimal speed',
+      accuracy: 99,
+      speed: 'medium',
+      color: 'bg-blue-500',
+      icon: <Award className="h-5 w-5" />,
+      processingTime: 400
+    }
+  ];
+
+  const commonPSLLetters = [
+    'Alif', 'Bay', 'Pay', 'Tay', 'Taay', 'Say', 'Chay', 'Khay', 'Dal', '1-Hay',
+    'Daal', 'Ray', 'Zay', 'Seen', 'Sheen', 'Suad', 'Tuey', 'Ain', 'Ghain',
+    'Fay', 'Kaf', 'Lam', 'Meem', 'Nuun', 'Wao'
+  ];
+
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        
+        try {
+          await videoRef.current.play();
+          setCameraStarted(true);
+        } catch (playError) {
+          console.error('Video play error:', playError);
+        }
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      alert('Camera access failed. Please check permissions.');
+    }
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    setCameraStarted(false);
+    setIsRecording(false);
+    
+    // Stop WebSocket prediction if running
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    pslWebSocket.disconnect();
+    setConnectionStatus('disconnected');
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, [pslWebSocket]);
+
+  const startPrediction = () => {
+    if (!cameraStarted || !videoRef.current) {
+      console.error('Camera not started');
+      return;
+    }
+
+    if (!pslWebSocket.isConnected) {
+      console.error('WebSocket not connected. Please connect first.');
+      return;
+    }
+    
+    setIsRecording(true);
+    setFrameCount(0); // Reset frame count when starting
+    
+    // Start capturing and sending frames immediately since WebSocket is already connected
+    const captureFrame = () => {
+      if (videoRef.current && pslWebSocket.isConnected) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        if (ctx) {
+          const video = videoRef.current;
+          const videoWidth = video.videoWidth;
+          const videoHeight = video.videoHeight;
+          
+          // Calculate crop area for hand focus (center 60% of the frame)
+          const cropRatio = 0.6;
+          const cropWidth = videoWidth * cropRatio;
+          const cropHeight = videoHeight * cropRatio;
+          const cropX = (videoWidth - cropWidth) / 2;
+          const cropY = (videoHeight - cropHeight) / 2;
+          
+          // Set canvas size to the cropped area
+          canvas.width = cropWidth;
+          canvas.height = cropHeight;
+          
+          if (videoWidth > 0 && videoHeight > 0) {
+            // Draw the cropped area onto canvas
+            ctx.drawImage(
+              video,
+              cropX, cropY, cropWidth, cropHeight,  // Source crop area
+              0, 0, cropWidth, cropHeight           // Destination area (full canvas)
+            );
+            
+            // Increment frame count
+            setFrameCount(prev => prev + 1);
+            
+            // Convert to base64 and send to WebSocket
+            const frameData = canvas.toDataURL('image/jpeg', 0.8);
+            pslWebSocket.sendFrame(frameData);
+          }
+        }
+      }
+    };
+
+    // Send frames every 400ms for balanced speed and stability
+    frameIntervalRef.current = window.setInterval(captureFrame, 400);
+  };
+
+  const stopPrediction = () => {
+    setIsRecording(false);
+    setFrameCount(0); // Reset frame count when stopping
+    
+    // Stop frame capture
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    
+    // Disconnect WebSocket
+    pslWebSocket.disconnect();
+    setConnectionStatus('disconnected');
+  };
+
+  const resetSession = () => {
+    setSessionStats({ correct: 0, total: 0, streak: 0, bestStreak: 0 });
+    setPredictions([]);
+    setCurrentPrediction(null);
+    setTargetLetter('');
+    setPracticeMode('free');
+  };
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModel(modelId);
+    
+    // If WebSocket is connected, switch the model
+    if (pslWebSocket.isConnected) {
+      const wsModelType = modelId === 'ps-mini' ? 'ps_mini' : 'ps_pro';
+      pslWebSocket.switchModel(wsModelType);
     }
   };
 
@@ -163,12 +276,35 @@ const PSLPractice: React.FC = () => {
     setCurrentPrediction(null);
   };
 
-  const resetSession = () => {
-    setSessionStats({ correct: 0, total: 0, streak: 0, bestStreak: 0 });
-    setPredictions([]);
-    setCurrentPrediction(null);
-    setTargetLetter('');
-    setPracticeMode('free');
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imageData = e.target?.result as string;
+        setTestImage(imageData);
+        
+        // Test prediction on uploaded image
+        if (pslWebSocket.isConnected) {
+          testImagePrediction(imageData);
+        } else {
+          alert('Please connect to WebSocket first to test the image');
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const testImagePrediction = (imageData: string) => {
+    if (!pslWebSocket.isConnected) {
+      console.error('WebSocket not connected');
+      return;
+    }
+
+    // Send the image for prediction
+    pslWebSocket.sendFrame(imageData);
+    
+    // The result will come through the normal onPrediction callback
   };
 
   const selectedModelConfig = models.find(m => m.id === selectedModel);
@@ -205,7 +341,7 @@ const PSLPractice: React.FC = () => {
                     ? 'border-indigo-500 bg-indigo-50 shadow-lg scale-105'
                     : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
                 }`}
-                onClick={() => setSelectedModel(model.id)}
+                onClick={() => handleModelChange(model.id)}
               >
                 <div className="flex items-start space-x-4">
                   <div className={`p-3 rounded-full text-white ${model.color}`}>
@@ -290,22 +426,37 @@ const PSLPractice: React.FC = () => {
                       <span>{processingTime}ms</span>
                     </span>
                   )}
+                  {/* WebSocket Connection Status */}
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    connectionStatus === 'connected' ? 'bg-green-100 text-green-800' :
+                    connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
+                  }`}>
+                    {connectionStatus === 'connected' ? '🟢 Connected' :
+                     connectionStatus === 'connecting' ? '🟡 Connecting' :
+                     '🔴 Disconnected'}
+                  </span>
                 </div>
               </div>
               
-              <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video mb-6">
+              <div className="relative bg-gray-900 rounded-lg overflow-hidden mb-6" style={{ width: '100%', height: '400px' }}>
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className="w-full h-full object-cover"
+                  style={{ 
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    backgroundColor: '#000000'
+                  }}
                 />
-                {!isRecording && (
+                {!cameraStarted && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center text-white">
                       <Camera className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p className="text-lg">Click Start to begin practice</p>
+                      <p className="text-lg">Click Start Camera to begin</p>
                     </div>
                   </div>
                 )}
@@ -318,6 +469,14 @@ const PSLPractice: React.FC = () => {
                   </div>
                 )}
 
+                {/* Frame Count Display */}
+                {isRecording && (
+                  <div className="absolute top-4 right-4 bg-black/70 text-white px-3 py-2 rounded-lg">
+                    <div className="text-sm">Frame:</div>
+                    <div className="text-lg font-mono">{frameCount}</div>
+                  </div>
+                )}
+
                 {/* Current Prediction Overlay */}
                 {currentPrediction && (
                   <div className="absolute bottom-4 right-4 bg-black/70 text-white px-4 py-2 rounded-lg">
@@ -326,29 +485,116 @@ const PSLPractice: React.FC = () => {
                     <div className="text-sm">{(currentPrediction.confidence * 100).toFixed(1)}%</div>
                   </div>
                 )}
+
+                {/* Hand Focus Area Overlay */}
+                {cameraStarted && (
+                  <div className="absolute inset-0 pointer-events-none">
+                    {/* Crop area indicator - center 60% */}
+                    <div 
+                      className="absolute border-2 border-green-400 border-dashed bg-green-400/10"
+                      style={{
+                        left: '20%',
+                        top: '20%',
+                        width: '60%',
+                        height: '60%'
+                      }}
+                    >
+                      <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-green-400 text-sm font-medium bg-black/50 px-2 py-1 rounded">
+                        Hand Focus Area
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-center space-x-4">
-                <button
-                  onClick={toggleRecording}
-                  className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-colors duration-300 ${
-                    isRecording
-                      ? 'bg-red-500 hover:bg-red-600 text-white'
-                      : 'bg-indigo-500 hover:bg-indigo-600 text-white'
-                  }`}
-                >
-                  {isRecording ? (
-                    <>
-                      <StopCircle className="h-5 w-5" />
-                      <span>Stop Practice</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-5 w-5" />
-                      <span>Start Practice</span>
-                    </>
-                  )}
-                </button>
+                {!cameraStarted ? (
+                  <button
+                    onClick={startCamera}
+                    className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors duration-300"
+                  >
+                    <Camera className="h-5 w-5" />
+                    <span>Start Camera</span>
+                  </button>
+                ) : (
+                  <>
+                    {/* Connection Button */}
+                    {connectionStatus === 'disconnected' && (
+                      <button
+                        onClick={() => {
+                          setConnectionStatus('connecting');
+                          pslWebSocket.connect();
+                        }}
+                        className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors duration-300"
+                      >
+                        <Zap className="h-5 w-5" />
+                        <span>Connect</span>
+                      </button>
+                    )}
+
+                    {/* Prediction Controls - only show when connected */}
+                    {connectionStatus === 'connected' && (
+                      <>
+                        {!isRecording ? (
+                          <button
+                            onClick={startPrediction}
+                            className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors duration-300"
+                          >
+                            <Play className="h-5 w-5" />
+                            <span>Start Prediction</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={stopPrediction}
+                            className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors duration-300"
+                          >
+                            <StopCircle className="h-5 w-5" />
+                            <span>Stop Prediction</span>
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* Disconnect Button - show when connected or connecting */}
+                    {(connectionStatus === 'connected' || connectionStatus === 'connecting') && (
+                      <button
+                        onClick={() => {
+                          pslWebSocket.disconnect();
+                          setConnectionStatus('disconnected');
+                          if (isRecording) {
+                            stopPrediction();
+                          }
+                        }}
+                        className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-orange-500 hover:bg-orange-600 text-white transition-colors duration-300"
+                      >
+                        <XCircle className="h-5 w-5" />
+                        <span>Disconnect</span>
+                      </button>
+                    )}
+                    
+                    {/* Image Upload Test Button */}
+                    <label
+                      className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors duration-300 cursor-pointer"
+                    >
+                      <Upload className="h-5 w-5" />
+                      <span>Test Image</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    
+                    <button
+                      onClick={stopCamera}
+                      className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-gray-600 hover:bg-gray-700 text-white transition-colors duration-300"
+                    >
+                      <Camera className="h-5 w-5" />
+                      <span>Stop Camera</span>
+                    </button>
+                  </>
+                )}
 
                 {(predictions.length > 0 || sessionStats.total > 0) && (
                   <button
@@ -365,6 +611,43 @@ const PSLPractice: React.FC = () => {
 
           {/* Results Panel */}
           <div className="space-y-6">
+            {/* Test Image Results */}
+            {testImage && (
+              <div className="bg-white rounded-2xl shadow-lg p-6">
+                <h3 className="text-xl font-bold text-gray-900 mb-4">Test Image Prediction</h3>
+                <div className="space-y-4">
+                  <div className="relative">
+                    <img 
+                      src={testImage} 
+                      alt="Test upload" 
+                      className="w-full max-w-xs rounded-lg shadow-md mx-auto"
+                    />
+                  </div>
+                  {testPrediction && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-gray-900 mb-2">
+                          {testPrediction.letter}
+                        </div>
+                        <div className="text-lg text-gray-600">
+                          {(testPrediction.confidence * 100).toFixed(1)}% confidence
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => {
+                      setTestImage(null);
+                      setTestPrediction(null);
+                    }}
+                    className="w-full px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                  >
+                    Clear Test
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Session Stats */}
             {practiceMode === 'guided' && sessionStats.total > 0 && (
               <div className="bg-white rounded-2xl shadow-lg p-6">

@@ -338,9 +338,29 @@ const Practice: React.FC = () => {
   const startCamera = async () => {
     setIsCameraLoading(true);
     try {
+      // Check for basic camera support
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showNotification('error', 'Camera access is not supported in this browser.');
+        showNotification('error', 'Camera access is not supported in this browser. Please use Chrome, Firefox, or Safari.');
         return;
+      }
+
+      // Check if we're in a secure context (HTTPS or localhost)
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        showNotification('error', 'Camera access requires HTTPS or localhost. Please use a secure connection.');
+        return;
+      }
+
+      // Check camera permissions first
+      try {
+        const permissions = await navigator.permissions.query({ name: 'camera' as PermissionName });
+        console.log('Camera permission status:', permissions.state);
+        if (permissions.state === 'denied') {
+          showNotification('error', 'Camera permission is denied. Please enable camera access in your browser settings.');
+          return;
+        }
+      } catch (permError) {
+        console.log('Could not check camera permissions:', permError);
+        // Continue anyway as some browsers don't support permissions API
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -381,17 +401,45 @@ const Practice: React.FC = () => {
       showNotification('success', 'Camera started successfully!');
     } catch (error: any) {
       console.error('Error accessing camera:', error);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        constraint: error.constraint
+      });
       
       let errorMessage = 'Could not access camera. ';
       
       if (error.name === 'NotAllowedError') {
-        errorMessage += 'Camera permission was denied.';
+        errorMessage += 'Camera permission was denied. Please allow camera access and try again.';
       } else if (error.name === 'NotFoundError') {
-        errorMessage += 'No camera device found.';
+        errorMessage += 'No camera device found. Please check if a camera is connected.';
       } else if (error.name === 'NotReadableError') {
-        errorMessage += 'Camera is already in use by another application.';
+        errorMessage += 'Camera is already in use by another application. Please close other apps using the camera.';
+      } else if (error.name === 'OverconstrainedError') {
+        errorMessage += 'Camera does not support the required settings. Trying with basic settings...';
+        // Try again with simpler constraints
+        try {
+          const simpleStream = await navigator.mediaDevices.getUserMedia({ 
+            video: true,
+            audio: false 
+          });
+          setCameraStream(simpleStream);
+          if (videoRef.current) {
+            videoRef.current.srcObject = simpleStream;
+            await videoRef.current.play();
+          }
+          setIsRecording(true);
+          showNotification('success', 'Camera started with basic settings!');
+          return;
+        } catch (retryError) {
+          console.error('Retry with simple settings failed:', retryError);
+          errorMessage += ' Basic camera access also failed.';
+        }
+      } else if (error.name === 'NotSupportedError') {
+        errorMessage += 'Camera access is not supported in this browser or requires HTTPS.';
       } else {
-        errorMessage += 'Please check your camera settings.';
+        errorMessage += `Please check your camera settings. Error: ${error.message || 'Unknown error'}`;
       }
       
       showNotification('error', errorMessage);

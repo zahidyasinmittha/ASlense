@@ -10,6 +10,7 @@ import binascii
 import torch
 import asyncio
 import time
+import logging
 from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict
@@ -23,6 +24,7 @@ from app.schemas import EnhancedPredictionResult, PredictionHistoryCreate, UserP
 from app.services.user_service import PredictionService, ProgressService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Performance constants
 BATCH_SIZE = 15  # Reduced for faster processing
@@ -1213,3 +1215,165 @@ async def predict_with_user(
     except Exception as e:
         print(f"Error saving user prediction: {e}")
         raise HTTPException(status_code=500, detail="Failed to save prediction")
+
+
+@router.websocket("/psl-predict")
+async def websocket_psl_predict(
+    websocket: WebSocket,
+    model_type: str = "ps_mini"
+):
+    """
+    WebSocket endpoint for PSL (Pakistan Sign Language) real-time prediction
+    Uses the PSL model service for frame-by-frame predictions
+    """
+    from app.services.psl_model_service import psl_model_service
+    
+    await websocket.accept()
+    
+    try:
+        # Validate model type
+        if model_type not in ["ps_mini", "ps_pro"]:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid model type. Must be 'ps_mini' or 'ps_pro'"
+            })
+            await websocket.close()
+            return
+        
+        # Set the current model
+        psl_model_service.set_current_model(model_type)
+        
+        # Get model info
+        model_info = psl_model_service.get_model_info(model_type)
+        
+        if model_info["status"] != "loaded":
+            await websocket.send_json({
+                "type": "error",
+                "message": f"PSL {model_type} model not loaded properly"
+            })
+            await websocket.close()
+            return
+        
+        # Send connection success message
+        await websocket.send_json({
+            "type": "connected",
+            "message": "PSL prediction ready",
+            "model_type": model_type,
+            "model_info": model_info
+        })
+        
+        frame_count = 0
+        
+        while True:
+            try:
+                # Receive message
+                data = await websocket.receive_json()
+                msg_type = data.get("type")
+                
+                if msg_type == "frame":
+                    # Get frame data
+                    image_data = data.get("frame", "")
+                    
+                    logger.info(f"📸 Received PSL frame: {len(image_data) if image_data else 0} bytes")
+                    
+                    if len(image_data) == 0:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "No frame data provided"
+                        })
+                        continue
+                    
+                    # Handle data URL format (remove header if present)
+                    if "," in image_data:
+                        header, image_data = image_data.split(",", 1)
+                        logger.debug(f"Removed data URL header: {header[:50]}...")
+                    
+                    try:
+                        # Predict using PSL model service
+                        logger.info(f"🤖 Making PSL prediction with {model_type} model...")
+                        prediction_result = psl_model_service.predict(image_data, top_k=3, model_key=model_type)
+                        
+                        frame_count += 1
+                        
+                        if "error" in prediction_result:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": prediction_result["error"],
+                                "frame_count": frame_count
+                            })
+                        else:
+                            # Send successful prediction
+                            top_prediction = prediction_result["predictions"][0]["class"] if prediction_result["predictions"] else "Unknown"
+                            confidence = prediction_result["confidence"]
+                            
+                            logger.info(f"✅ PSL Prediction sent: '{top_prediction}' ({confidence:.1%}) [Frame: {frame_count}]")
+                            
+                            await websocket.send_json({
+                                "type": "prediction",
+                                "frame_count": frame_count,
+                                "letter": top_prediction,
+                                "confidence": confidence,
+                                "predictions": prediction_result["predictions"][:3],  # Top 3 predictions
+                                "processing_time": prediction_result.get("processing_time", "N/A"),
+                                "model_used": prediction_result["model_used"],
+                                "timestamp": time.time()
+                            })
+                    
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Prediction error: {str(e)}",
+                            "frame_count": frame_count
+                        })
+                
+                elif msg_type == "ping":
+                    # Health check
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": time.time()
+                    })
+                
+                elif msg_type == "switch_model":
+                    # Switch PSL model
+                    new_model = data.get("model", "ps_mini")
+                    if new_model in ["ps_mini", "ps_pro"]:
+                        psl_model_service.set_current_model(new_model)
+                        model_info = psl_model_service.get_model_info(new_model)
+                        await websocket.send_json({
+                            "type": "model_switched",
+                            "model_type": new_model,
+                            "model_info": model_info
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Invalid model type for switch"
+                        })
+                
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Unknown message type: {msg_type}"
+                    })
+            
+            except WebSocketDisconnect:
+                print(f"PSL WebSocket client disconnected")
+                break
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Unexpected error: {str(e)}"
+                })
+                break
+    
+    except WebSocketDisconnect:
+        print(f"PSL WebSocket disconnected during setup")
+    except Exception as e:
+        print(f"PSL WebSocket error: {str(e)}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Connection error: {str(e)}"
+            })
+        except:
+            pass  # Connection might be closed
