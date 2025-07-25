@@ -78,6 +78,25 @@ interface SystemMetrics {
   totalSessions: number;
 }
 
+interface ContactMessage {
+  id: number;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: 'unread' | 'read' | 'replied';
+  created_at: string;
+  updated_at: string;
+  admin_notes?: string;
+}
+
+interface ContactStats {
+  total: number;
+  unread: number;
+  read: number;
+  replied: number;
+}
+
 const AdminDashboard: React.FC = () => {
   const { token, isAdmin, user } = useAuth();
   const navigate = useNavigate();
@@ -86,15 +105,21 @@ const AdminDashboard: React.FC = () => {
   console.log('AdminDashboard - Current user:', user);
   console.log('AdminDashboard - Is admin:', isAdmin);
   console.log('AdminDashboard - Token exists:', !!token);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'videos' | 'psl' | 'metrics' | 'tools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'videos' | 'psl' | 'metrics' | 'tools' | 'contact'>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [pslEntries, setPslEntries] = useState<PSLAlphabetEntry[]>([]);
   const [filteredPslEntries, setFilteredPslEntries] = useState<PSLAlphabetEntry[]>([]);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
+  const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
+  const [contactStats, setContactStats] = useState<ContactStats | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<ContactMessage | null>(null);
+  const [messageStatusFilter, setMessageStatusFilter] = useState<string>('all');
+  const [showMessageModal, setShowMessageModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pslLoading, setPslLoading] = useState(false);
+  const [contactLoading, setContactLoading] = useState(false);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
   const [showPslModal, setShowPslModal] = useState(false);
@@ -179,6 +204,31 @@ const AdminDashboard: React.FC = () => {
         setMetrics(metricsResponse.data as SystemMetrics);
       } catch (error) {
         console.error('Error fetching metrics:', error);
+      }
+
+      // Fetch contact messages and stats
+      try {
+        const contactResponse = await fetch('/api/v1/contact/admin/messages', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (contactResponse.ok) {
+          const contactData = await contactResponse.json();
+          setContactMessages(contactData);
+        }
+
+        const contactStatsResponse = await fetch('/api/v1/contact/admin/stats', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (contactStatsResponse.ok) {
+          const contactStatsData = await contactStatsResponse.json();
+          setContactStats(contactStatsData);
+        }
+      } catch (error) {
+        console.error('Error fetching contact data:', error);
       }
     } catch (error) {
       console.error('Error fetching admin data:', error);
@@ -276,6 +326,108 @@ const AdminDashboard: React.FC = () => {
       is_active: user.is_active
     });
     setShowEditUserModal(true);
+  };
+
+  // Contact Message Functions
+  const fetchContactMessages = async (status?: string) => {
+    try {
+      setContactLoading(true);
+      let url = '/api/v1/contact/admin/messages';
+      if (status && status !== 'all') {
+        url += `?status=${status}`;
+      }
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setContactMessages(data);
+      }
+    } catch (error) {
+      console.error('Error fetching contact messages:', error);
+      showNotification('error', 'Failed to fetch contact messages');
+    } finally {
+      setContactLoading(false);
+    }
+  };
+
+  const markMessageAsRead = async (messageId: number) => {
+    try {
+      const response = await fetch(`/api/v1/contact/admin/messages/${messageId}/mark-read`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        setContactMessages(contactMessages.map(msg => 
+          msg.id === messageId ? { ...msg, status: 'read' } : msg
+        ));
+        showNotification('success', 'Message marked as read');
+      }
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+      showNotification('error', 'Failed to mark message as read');
+    }
+  };
+
+  const markMessageAsReplied = async (messageId: number, adminNotes: string = '') => {
+    try {
+      const response = await fetch(`/api/v1/contact/admin/messages/${messageId}/mark-replied`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ admin_notes: adminNotes }),
+      });
+      
+      if (response.ok) {
+        setContactMessages(contactMessages.map(msg => 
+          msg.id === messageId ? { ...msg, status: 'replied', admin_notes: adminNotes } : msg
+        ));
+        showNotification('success', 'Message marked as replied');
+      }
+    } catch (error) {
+      console.error('Error marking message as replied:', error);
+      showNotification('error', 'Failed to mark message as replied');
+    }
+  };
+
+  const deleteContactMessage = async (messageId: number) => {
+    if (!confirm('Are you sure you want to delete this contact message?')) return;
+    
+    try {
+      const response = await fetch(`/api/v1/contact/admin/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        setContactMessages(contactMessages.filter(msg => msg.id !== messageId));
+        showNotification('success', 'Contact message deleted');
+      }
+    } catch (error) {
+      console.error('Error deleting contact message:', error);
+      showNotification('error', 'Failed to delete contact message');
+    }
+  };
+
+  const openMessageModal = (message: ContactMessage) => {
+    setSelectedMessage(message);
+    setShowMessageModal(true);
+    
+    // Mark as read if unread
+    if (message.status === 'unread') {
+      markMessageAsRead(message.id);
+    }
   };
 
   // PSL Management Functions
@@ -492,6 +644,13 @@ const AdminDashboard: React.FC = () => {
     }
   }, [activeTab, token]);
 
+  // Load contact messages when tab is active
+  React.useEffect(() => {
+    if (activeTab === 'contact' && contactMessages.length === 0) {
+      fetchContactMessages();
+    }
+  }, [activeTab, token]);
+
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.username.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
                          user.email.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
@@ -653,6 +812,7 @@ const AdminDashboard: React.FC = () => {
               { id: 'users', label: 'User Management', icon: '👥', color: 'green' },
               { id: 'videos', label: 'Video Management', icon: '🎥', color: 'purple' },
               { id: 'psl', label: 'PSL Alphabet', icon: '🤟', color: 'indigo' },
+              { id: 'contact', label: 'Contact Messages', icon: '✉️', color: 'pink' },
               { id: 'metrics', label: 'System Metrics', icon: '📈', color: 'orange' },
               { id: 'tools', label: 'Admin Tools', icon: '🛠️', color: 'gray' }
             ].map((tab) => (
@@ -1284,6 +1444,204 @@ const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* Contact Messages Tab */}
+        {activeTab === 'contact' && (
+          <div className="space-y-8">
+            {/* Contact Stats Cards */}
+            {contactStats && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                  <div className="flex items-center">
+                    <div className="bg-pink-500 rounded-lg p-3">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <div className="ml-4">
+                      <p className="text-2xl font-bold text-gray-800">{contactStats.total}</p>
+                      <p className="text-gray-600">Total Messages</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                  <div className="flex items-center">
+                    <div className="bg-red-500 rounded-lg p-3">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                    <div className="ml-4">
+                      <p className="text-2xl font-bold text-gray-800">{contactStats.unread}</p>
+                      <p className="text-gray-600">Unread</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                  <div className="flex items-center">
+                    <div className="bg-yellow-500 rounded-lg p-3">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </div>
+                    <div className="ml-4">
+                      <p className="text-2xl font-bold text-gray-800">{contactStats.read}</p>
+                      <p className="text-gray-600">Read</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                  <div className="flex items-center">
+                    <div className="bg-green-500 rounded-lg p-3">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <div className="ml-4">
+                      <p className="text-2xl font-bold text-gray-800">{contactStats.replied}</p>
+                      <p className="text-gray-600">Replied</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Contact Messages Management */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                  <div className="w-4 h-4 bg-pink-500 rounded-full mr-3"></div>
+                  Contact Messages
+                </h2>
+                
+                {/* Filter Controls */}
+                <div className="flex space-x-3">
+                  <select
+                    value={messageStatusFilter}
+                    onChange={(e) => {
+                      setMessageStatusFilter(e.target.value);
+                      fetchContactMessages(e.target.value);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent"
+                  >
+                    <option value="all">All Messages</option>
+                    <option value="unread">Unread</option>
+                    <option value="read">Read</option>
+                    <option value="replied">Replied</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Messages List */}
+              {contactLoading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-pink-600 mx-auto"></div>
+                  <p className="mt-2 text-gray-600">Loading contact messages...</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Sender
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Subject
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Date
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {contactMessages.map((message) => (
+                        <tr key={message.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex flex-col">
+                              <div className="text-sm font-medium text-gray-900">{message.name}</div>
+                              <div className="text-sm text-gray-500">{message.email}</div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-900 max-w-xs truncate">{message.subject}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              message.status === 'unread' 
+                                ? 'bg-red-100 text-red-800'
+                                : message.status === 'read'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-green-100 text-green-800'
+                            }`}>
+                              {message.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(message.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => openMessageModal(message)}
+                                className="text-pink-600 hover:text-pink-900"
+                                title="View message"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                              </button>
+                              {message.status === 'unread' && (
+                                <button
+                                  onClick={() => markMessageAsRead(message.id)}
+                                  className="text-yellow-600 hover:text-yellow-900"
+                                  title="Mark as read"
+                                >
+                                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </button>
+                              )}
+                              <button
+                                onClick={() => deleteContactMessage(message.id)}
+                                className="text-red-600 hover:text-red-900"
+                                title="Delete message"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  
+                  {contactMessages.length === 0 && (
+                    <div className="text-center py-8">
+                      <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      <p className="mt-2 text-gray-500">No contact messages found</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* System Metrics Tab */}
         {activeTab === 'metrics' && (
           <div className="space-y-8">
@@ -1721,6 +2079,118 @@ const AdminDashboard: React.FC = () => {
               >
                 <span>{editingPslEntry ? 'Update' : 'Create'}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contact Message Modal */}
+      {showMessageModal && selectedMessage && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Contact Message Details</h3>
+              <button
+                onClick={() => {
+                  setShowMessageModal(false);
+                  setSelectedMessage(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Message Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <p className="text-gray-900">{selectedMessage.name}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <p className="text-gray-900">{selectedMessage.email}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                  <p className="text-gray-900">{selectedMessage.subject}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                    selectedMessage.status === 'unread' 
+                      ? 'bg-red-100 text-red-800'
+                      : selectedMessage.status === 'read'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-green-100 text-green-800'
+                  }`}>
+                    {selectedMessage.status}
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date Received</label>
+                  <p className="text-gray-900">{new Date(selectedMessage.created_at).toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* Message Content */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Message</label>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-gray-900 whitespace-pre-wrap">{selectedMessage.message}</p>
+                </div>
+              </div>
+
+              {/* Admin Notes */}
+              {selectedMessage.admin_notes && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Admin Notes</label>
+                  <div className="bg-blue-50 rounded-lg p-4">
+                    <p className="text-gray-900 whitespace-pre-wrap">{selectedMessage.admin_notes}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => {
+                    setShowMessageModal(false);
+                    setSelectedMessage(null);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+                >
+                  Close
+                </button>
+                
+                {selectedMessage.status !== 'replied' && (
+                  <button
+                    onClick={() => {
+                      const adminNotes = prompt('Add admin notes (optional):') || '';
+                      markMessageAsReplied(selectedMessage.id, adminNotes);
+                      setShowMessageModal(false);
+                      setSelectedMessage(null);
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Mark as Replied
+                  </button>
+                )}
+                
+                <button
+                  onClick={() => {
+                    deleteContactMessage(selectedMessage.id);
+                    setShowMessageModal(false);
+                    setSelectedMessage(null);
+                  }}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Delete Message
+                </button>
+              </div>
             </div>
           </div>
         </div>

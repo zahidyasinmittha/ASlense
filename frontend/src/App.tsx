@@ -15,7 +15,6 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import PSLAdminPage from './pages/PSLAdminPage';
-import CameraTest from './pages/CameraTest';
 import ProtectedRoute from "./components/ProtectedRoute"
 
 function App() {
@@ -29,7 +28,6 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/about" element={<About />} />
-            <Route path="/camera-test" element={<CameraTest />} />
             
             {/* Protected Routes - Require Authentication */}
             <Route path="/learn" element={

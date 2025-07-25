@@ -840,7 +840,7 @@ const Translate: React.FC = () => {
               <Camera className="inline-block w-5 h-5 mr-2" />
               Sign to Text
             </button>
-            <button
+            {/* <button
               onClick={() => setTranslationMode('text-to-sign')}
               className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 ${
                 translationMode === 'text-to-sign'
@@ -850,7 +850,7 @@ const Translate: React.FC = () => {
             >
               <Type className="inline-block w-5 h-5 mr-2" />
               Text to Sign
-            </button>
+            </button> */}
           </div>
         </div>
 

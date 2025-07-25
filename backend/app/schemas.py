@@ -226,5 +226,29 @@ class PSLAlphabet(PSLAlphabetBase):
     class Config:
         from_attributes = True
 
+# Contact Message Schemas
+class ContactMessageBase(BaseModel):
+    name: str
+    email: EmailStr
+    subject: str
+    message: str
+
+class ContactMessageCreate(ContactMessageBase):
+    pass
+
+class ContactMessageUpdate(BaseModel):
+    status: Optional[str] = None  # unread, read, replied
+    admin_notes: Optional[str] = None
+
+class ContactMessage(ContactMessageBase):
+    id: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    admin_notes: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
 # Update forward references
 UserWithProgress.model_rebuild()

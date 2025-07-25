@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Contact System**
+  - Contact form with email notifications
+  - SMTP email service integration
+  - Admin dashboard contact management
+  - Contact message status tracking (unread/read/replied)
+  - Email notifications sent to admin (b.zahidmittha@gmail.com)
+  - Contact statistics and analytics
 - Enhanced video prediction aggregation system
   - Multi-frame prediction aggregation for improved accuracy
   - Weighted averaging across video frames

@@ -59,6 +59,96 @@ GET /user/progress
 Authorization: Bearer <token>
 ```
 
+### Contact Management
+
+#### Submit Contact Form
+```http
+POST /contact/
+Content-Type: application/json
+
+{
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "subject": "Feature Request",
+    "message": "I would like to suggest a new feature..."
+}
+```
+
+**Response:**
+```json
+{
+    "id": 1,
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "subject": "Feature Request",
+    "message": "I would like to suggest a new feature...",
+    "status": "unread",
+    "created_at": "2024-01-01T00:00:00",
+    "updated_at": "2024-01-01T00:00:00"
+}
+```
+
+#### Get Contact Messages (Admin Only)
+```http
+GET /contact/admin/messages?page=1&limit=10
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+```json
+{
+    "messages": [
+        {
+            "id": 1,
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "subject": "Feature Request",
+            "message": "I would like to suggest a new feature...",
+            "status": "unread",
+            "created_at": "2024-01-01T00:00:00",
+            "updated_at": "2024-01-01T00:00:00"
+        }
+    ],
+    "total": 1,
+    "page": 1,
+    "limit": 10,
+    "pages": 1
+}
+```
+
+#### Update Contact Message Status (Admin Only)
+```http
+PUT /contact/admin/messages/{message_id}/status
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+    "status": "read"
+}
+```
+
+#### Delete Contact Message (Admin Only)
+```http
+DELETE /contact/admin/messages/{message_id}
+Authorization: Bearer <admin-token>
+```
+
+#### Get Contact Statistics (Admin Only)
+```http
+GET /contact/admin/stats
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+```json
+{
+    "total_messages": 15,
+    "unread_messages": 3,
+    "read_messages": 10,
+    "replied_messages": 2
+}
+```
+
 ### Practice & Learning
 
 #### Predict from Video Upload
@@ -219,6 +309,30 @@ interface Prediction {
     word: string;
     confidence: number;
     rank: number;
+}
+```
+
+#### Contact Message
+```typescript
+interface ContactMessage {
+    id: number;
+    name: string;
+    email: string;
+    subject: string;
+    message: string;
+    status: "unread" | "read" | "replied";
+    created_at: string;
+    updated_at: string;
+}
+```
+
+#### Contact Statistics
+```typescript
+interface ContactStats {
+    total_messages: number;
+    unread_messages: number;
+    read_messages: number;
+    replied_messages: number;
 }
 ```
 

@@ -10,7 +10,8 @@ from app.api.v1.endpoints import (
     admin,
     psl_alphabet,
     websocket_psl,
-    psl_inference
+    psl_inference,
+    contact
 )
 
 api_router = APIRouter()
@@ -25,4 +26,5 @@ api_router.include_router(translate.router, prefix="/translate", tags=["translat
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(psl_alphabet.router, prefix="/psl-alphabet", tags=["psl-alphabet"])
 api_router.include_router(psl_inference.router, prefix="/psl-inference", tags=["psl-inference"])
+api_router.include_router(contact.router, prefix="/contact", tags=["contact"])
 api_router.include_router(websocket_psl.router, prefix="/ws", tags=["websockets"])

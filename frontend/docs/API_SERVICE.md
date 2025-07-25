@@ -35,7 +35,7 @@ const loginEndpoint = API_CONFIG.ENDPOINTS.AUTH.LOGIN; // '/auth/login'
 ### 2. Using API Functions
 
 ```typescript
-import { authAPI, userAPI, translateAPI } from '../services/api';
+import { authAPI, userAPI, translateAPI, contactAPI } from '../services/api';
 
 // Authentication
 const response = await authAPI.login({ username: 'user', password: 'pass' });
@@ -48,6 +48,15 @@ const progress = await userAPI.getProgress();
 const formData = new FormData();
 formData.append('video', videoFile);
 const result = await translateAPI.predictVideo(formData);
+
+// Contact operations
+const contactData = {
+  name: 'John Doe',
+  email: 'john@example.com',
+  subject: 'Feature Request',
+  message: 'I would like to suggest...'
+};
+const contactResponse = await contactAPI.submitContact(contactData);
 ```
 
 ### 3. Using Custom Hooks (Recommended)
@@ -141,6 +150,13 @@ VITE_BACKEND_BASEURL=https://your-production-api.com
 - `predictVideo(formData)` - Predict ASL from video
 - `startSession(data)` - Start translation session
 - `endSession(sessionId, data)` - End translation session
+
+### ContactAPI
+- `submitContact(contactData)` - Submit contact form
+- `getMessages(page, limit)` - Get contact messages (admin only)
+- `updateMessageStatus(id, status)` - Update message status (admin only)
+- `deleteMessage(id)` - Delete contact message (admin only)
+- `getStats()` - Get contact statistics (admin only)
 
 ### PracticeAPI
 - `predictVideo(formData)` - Practice video prediction

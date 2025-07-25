@@ -1,0 +1,67 @@
+# ─── Python / FastAPI backend ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual envs
+.venv/
+env/
+venv/
+
+psl models
+
+# Environment variables
+.env
+.env.*  
+
+*.pt
+*.pth
+# Model weights
+# These are large files, so we don't want to track them in git.
+hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth 
+bone_motion_wights-checkpoint-epoch291.pt
+bone_wights-checkpoint-epoch245.pt
+joints_weights-checkpoint-epoch293.pt
+joint_motion_wights-checkpoint-epoch267.pt
+# Front‑end static assets
+public/
+node_modules/
+dist/
+build/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test, coverage & profiler output
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+cache/
+nosetests.xml
+
+# Packaging
+*.egg-info/
+.eggs/
+MANIFEST
+
+# Logs & runtime
+*.log
+*.pid
+*.sqlite3
+instance/
+*.db
+*.pkl
+
+# IDE / tooling
+.mypy_cache/
+*.idea/
+.vscode/
+!.vscode/extensions.json
+
+# OS cruft
+.DS_Store
+Thumbs.db

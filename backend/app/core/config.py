@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     thumbnail_dir: str = "public/thumbnails"
     video_dir: str = "data/videos"
     
+    # Email Configuration
+    EMAIL_HOST_USER: str = "zahidmittha30@gmail.com"
+    EMAIL_HOST_PASSWORD: str = "kaducdigplhzqvtn"
+    EMAIL_PORT: int = 587
+    EMAIL_HOST: str = "smtp.gmail.com"
+    EMAIL_SEND: bool = True
+    EMAIL_USE_TLS: bool = True
+    EMAIL_USE_SSL: bool = False
+    CONTACT_RECIPIENT_EMAIL: str = "b.zahidmittha@gmail.com"
+    
     # Path objects for file operations
     @property
     def UPLOAD_DIR(self) -> Path:

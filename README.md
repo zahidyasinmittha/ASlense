@@ -17,6 +17,8 @@
 - **Progress Analytics** - Detailed statistics and learning insights
 - **Multi-Model Support** - Choose between accuracy (Pro) and speed (Mini) models
 - **Admin Dashboard** - Complete system management and analytics
+- **Contact System** - Integrated contact form with email notifications
+- **User Support** - Direct communication channel with administrators
 
 ### 🤖 AI & Machine Learning
 - **Ensemble Models** - Multiple AI models for high accuracy
@@ -29,6 +31,12 @@
 - **Streak Tracking** - Daily practice streaks and longest streaks
 - **Accuracy Metrics** - Detailed performance statistics
 - **Achievement System** - Unlock achievements as you learn
+
+### 📧 Communication & Support
+- **Contact Form** - Users can submit inquiries and feedback
+- **Email Notifications** - Automatic email alerts for new contact messages
+- **Admin Message Management** - Complete contact message workflow
+- **Status Tracking** - Mark messages as read, replied, or unread
 
 ## 🏗️ Architecture
 
@@ -128,12 +136,14 @@ npm run dev
 3. **Practice Mode** - Upload videos or use live camera
 4. **Track Progress** - View your learning analytics
 5. **Earn Achievements** - Complete challenges and unlock rewards
+6. **Contact Support** - Submit questions or feedback through the contact form
 
 ### For Administrators
 1. **Admin Dashboard** - Access comprehensive analytics
 2. **User Management** - View and manage user accounts
 3. **Content Management** - Upload and organize learning videos
-4. **System Analytics** - Monitor platform performance
+4. **Contact Management** - View and respond to user messages
+5. **System Analytics** - Monitor platform performance
 
 ## 🛠️ Development
 
@@ -149,6 +159,8 @@ See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed organization infor
 - **PyTorch** - AI/ML framework
 - **OpenCV** - Computer vision
 - **JWT** - Authentication
+- **SMTP Email** - Email notifications and communication
+- **fastapi-mail** - Email service integration
 
 #### Frontend
 - **React 18** - UI framework
@@ -197,6 +209,26 @@ Authorization: Bearer <token>
 
 # Admin metrics
 GET /api/v1/admin/metrics
+Authorization: Bearer <admin_token>
+```
+
+### Contact System
+```bash
+# Submit contact form
+POST /api/v1/contact/
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "subject": "Question about features",
+  "message": "I would like to know more about..."
+}
+
+# Get contact messages (admin only)
+GET /api/v1/contact/admin/messages
+Authorization: Bearer <admin_token>
+
+# Get contact statistics (admin only)
+GET /api/v1/contact/admin/stats
 Authorization: Bearer <admin_token>
 ```
 

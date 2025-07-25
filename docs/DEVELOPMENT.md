@@ -321,6 +321,96 @@ def test_create_feature(client, db):
     assert response.json()["name"] == "Test Feature"
 ```
 
+## 📧 Contact System Development
+
+### Email Service Configuration
+
+The contact system uses SMTP email service for sending notifications. Configure email settings in your environment:
+
+```bash
+# .env file
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_FROM=your-email@gmail.com
+MAIL_FROM_NAME="ASLense Support"
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_STARTTLS=true
+MAIL_SSL_TLS=false
+```
+
+### Contact Feature Components
+
+#### Backend Components
+1. **Models** (`backend/app/models/contact.py`):
+   - ContactMessage model with SQLAlchemy
+   - Status tracking (unread/read/replied)
+
+2. **Schemas** (`backend/app/schemas/contact.py`):
+   - ContactMessageCreate for form validation
+   - ContactMessageResponse for API responses
+
+3. **Services** (`backend/app/services/`):
+   - `email_service.py`: SMTP email functionality
+   - `contact_service.py`: Database operations
+
+4. **API Endpoints** (`backend/app/api/v1/endpoints/contact.py`):
+   - Public contact form submission
+   - Admin contact management endpoints
+
+#### Frontend Components
+1. **Contact Form** (`frontend/src/pages/Contact.tsx`):
+   - Form validation with error handling
+   - Success/error notifications
+   - Real-time API integration
+
+2. **Admin Dashboard** (`frontend/src/pages/AdminDashboard.tsx`):
+   - Contact messages management tab
+   - Status filtering and updates
+   - Message statistics display
+
+### Development Workflow for Contact Features
+
+1. **Database Changes**:
+```bash
+# Generate migration
+cd backend
+alembic revision --autogenerate -m "Add contact message table"
+
+# Run migration
+alembic upgrade head
+```
+
+2. **Testing Email Service**:
+```python
+# Test email functionality
+python -c "
+from app.services.email_service import EmailService
+from app.core.config import settings
+
+email_service = EmailService()
+email_service.send_contact_form_email(
+    'Test Subject',
+    'test@example.com',
+    'Test User',
+    'Test message content'
+)
+"
+```
+
+3. **API Testing**:
+```bash
+# Test contact form submission
+curl -X POST http://localhost:8000/api/v1/contact/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test User",
+    "email": "test@example.com",
+    "subject": "Test Subject",
+    "message": "Test message"
+  }'
+```
+
 ## 🎨 Frontend Development
 
 ### Component Development
