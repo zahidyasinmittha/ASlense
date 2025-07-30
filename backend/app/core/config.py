@@ -1,63 +1,59 @@
-# Backend Core Configuration
+# settings.py
 from pydantic_settings import BaseSettings
-from typing import Optional
-import os
 from pathlib import Path
+from typing import List
 
 class Settings(BaseSettings):
     """Application settings and configuration."""
-    
+
     # App Info
-    app_name: str = "ASLense API"
-    app_version: str = "1.0.0"
-    debug: bool = False
-    
+    app_name: str
+    app_version: str
+    debug: bool
+
     # Database
-    database_url: str = "sqlite:///./aslens.db"
-    
-    # Security
-    secret_key: str = "your-secret-key-here"
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    
-    # CORS
-    allowed_origins: list = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
-    
-    # File Storage
-    upload_dir: str = "uploads"
-    thumbnail_dir: str = "public/thumbnails"
-    video_dir: str = "data/videos"
-    
+    database_url: str
+
     # Email Configuration
-    EMAIL_HOST_USER: str = "zahidmittha30@gmail.com"
-    EMAIL_HOST_PASSWORD: str = "kaducdigplhzqvtn"
-    EMAIL_PORT: int = 587
-    EMAIL_HOST: str = "smtp.gmail.com"
-    EMAIL_SEND: bool = True
-    EMAIL_USE_TLS: bool = True
-    EMAIL_USE_SSL: bool = False
-    CONTACT_RECIPIENT_EMAIL: str = "b.zahidmittha@gmail.com"
-    
+    EMAIL_HOST_USER: str
+    EMAIL_HOST_PASSWORD: str
+    EMAIL_PORT: int
+    EMAIL_HOST: str
+    EMAIL_SEND: bool
+    EMAIL_USE_TLS: bool
+    EMAIL_USE_SSL: bool
+    CONTACT_RECIPIENT_EMAIL: str
+
+    # File Storage
+    upload_dir: str
+    thumbnail_dir: str
+    video_dir: str
+
+    # AI Models
+    model_path: str
+
+    # GROQ API Keys
+    GROQ_API_KEY_MAIN: str
+    GROQ_API_KEY_COMPOSER: str
+    GROQ_API_KEY_VALIDATOR: str
+
     # Path objects for file operations
     @property
     def UPLOAD_DIR(self) -> Path:
         return Path(self.upload_dir)
-    
+
     @property
     def THUMBNAIL_DIR(self) -> Path:
         return Path(self.thumbnail_dir)
-    
+
     @property
     def VIDEO_DIR(self) -> Path:
         return Path(self.video_dir)
-    
-    # AI Models
-    model_path: str = "models"
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False
+        env_file_encoding = "utf-8"
 
-# Global settings instance
+# instantiate once for app-wide use
 settings = Settings()

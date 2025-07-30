@@ -321,7 +321,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Discussions**: [GitHub Discussions](https://github.com/zahidyasinmittha/ASlense/discussions)
 
 ---
+## Model weights to download
+- **ALL Model Weights** - [Drive Link](https://drive.google.com/drive/folders/1EFPTa3hPqEo2f15dHvCxpshaTn5cqDX-?usp=drive_link)
 
+---
 <div align="center">
   <strong>Made with ❤️ for the ASL learning community</strong>
 </div>

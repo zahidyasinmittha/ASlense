@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 // Get base URL from environment variables
-export const BASE_URL = "https://skilled-dramatic-hey-mason.trycloudflare.com";
+export const BASE_URL = "http://localhost:8000";
 const WS_URL = BASE_URL.replace('http', 'ws');
 
 // Create axios instance with default configuration

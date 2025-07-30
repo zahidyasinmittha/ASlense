@@ -1,19 +1,17 @@
 # app/main.py
-from fastapi import FastAPI, Depends, Request
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-import time
-import os
-
-from app.core.database import engine, get_db
-from app.models import Base, Video
-from app.api.v1.api import api_router
-from app.core.config import settings
-from app.auth import create_default_admin
-
 from sqladmin import Admin
 from sqladmin.models import ModelView
+
+from app.core.database import engine, get_db
+from app.core.config import settings
+from app.models import Base, Video, User, UserProgress, PredictionHistory, TranslationSession
+from app.api.v1.api import api_router
+from app.auth import create_default_admin
 
 app = FastAPI(
     title="ASLense API",
@@ -21,82 +19,110 @@ app = FastAPI(
     version="2.0.0"
 )
 
+#––– SQLAdmin Views ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
 class VideoAdmin(ModelView, model=Video):
-    column_list = [Video.id, Video.title, Video.category, Video.difficulty]
-    column_searchable_list = [Video.title, Video.word, Video.category]
-    column_filters = [Video.category, Video.difficulty]
+    column_list = [Video.id, Video.title, Video.difficulty]
+    column_searchable_list = [Video.title, Video.word]
+
+
+class ProgressAdmin(ModelView, model=UserProgress):
+    column_list = [UserProgress.id, UserProgress.user_id, UserProgress.accuracy_rate]
+    column_searchable_list = [UserProgress.user_id]
+
+class PredictionAdmin(ModelView, model=PredictionHistory):
+    column_list = [PredictionHistory.id, PredictionHistory.user_id, PredictionHistory.target_word, PredictionHistory.is_correct]
+    column_searchable_list = [PredictionHistory.target_word, PredictionHistory.user_id]
+
+class TranslationSessionAdmin(ModelView, model=TranslationSession):
+    column_list = [TranslationSession.id, TranslationSession.user_id, TranslationSession.average_confidence,TranslationSession.accuracy_percentage,TranslationSession.total_confidence  ]
+    column_searchable_list = [TranslationSession.user_id]
 
 admin = Admin(app, engine)
 admin.add_view(VideoAdmin)
+admin.add_view(ProgressAdmin)
+admin.add_view(PredictionAdmin)
+admin.add_view(TranslationSessionAdmin)
 
-# Request logging middleware
+
+#––– Middleware & Static Files ––––––––––––––––––––––––––––––––––––––––––––––––––
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    # You can log here if desired
     response = await call_next(request)
     return response
 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],  # Allow all origins for development
+    allow_origins=["*"],  # Be cautious in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 
-# Mount static files for thumbnails
+# Ensure thumbnail dir exists, then mount
 thumbnail_dir = settings.THUMBNAIL_DIR
-if not thumbnail_dir.exists():
-    thumbnail_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/thumbnails", StaticFiles(directory=str(thumbnail_dir)), name="thumbnails")
+thumbnail_dir.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/thumbnails",
+    StaticFiles(directory=str(thumbnail_dir)),
+    name="thumbnails"
+)
 
-# Create tables
+
+#––– Startup & Tables ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+# Auto-create tables
 Base.metadata.create_all(bind=engine)
 
-# Create default admin user on startup
+# Create default admin user
 @app.on_event("startup")
-async def startup_event():
-    db = next(get_db())
+async def on_startup():
+    db: Session = next(get_db())
     try:
         create_default_admin(db)
-    except Exception as e:
-        # Admin creation error logged internally
+    except Exception:
         pass
     finally:
         db.close()
 
-# Root endpoint
+
+#––– Health & Root Endpoints ––––––––––––––––––––––––––––––––––––––––––––––––––––
+
 @app.get("/")
 async def root():
     return {
-        "message": "ASLense API v2.0", 
+        "message": "ASLense API v2.0",
         "status": "active",
         "features": [
             "User Authentication",
-            "Progress Tracking", 
+            "Progress Tracking",
             "Admin Dashboard",
             "Enhanced Predictions",
             "Practice History"
         ]
     }
 
-# Health check
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "version": "2.0.0"}
 
-# Router mounting - Use the organized API structure
+
+#––– API Routers ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
 app.include_router(api_router, prefix="/api/v1")
 
-# Legacy routes for backward compatibility (will be deprecated)
-# These can be removed once frontend is updated to use /api/v1 prefix
-from app.api.v1.endpoints import auth, user, videos, learn, practice, admin, translate
+# Legacy routes (to be deprecated)
+from app.api.v1.endpoints import auth, user, videos, learn, practice, admin as legacy_admin, translate
 
-# Mount individual routers for backward compatibility
 app.include_router(auth.router, prefix="/auth", tags=["auth-legacy"])
 app.include_router(user.router, prefix="/user", tags=["user-legacy"])
 app.include_router(videos.router, prefix="/videos", tags=["videos-legacy"])
 app.include_router(learn.router, prefix="/learn", tags=["learn-legacy"])
 app.include_router(practice.router, prefix="/practice", tags=["practice-legacy"])
 app.include_router(translate.router, prefix="/translate", tags=["translate-legacy"])
-app.include_router(admin.router, prefix="/admin-api", tags=["admin-legacy"])
+app.include_router(legacy_admin.router, prefix="/admin-api", tags=["admin-legacy"])
