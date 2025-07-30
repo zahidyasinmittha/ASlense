@@ -1025,12 +1025,12 @@ const Translate: React.FC = () => {
                 <div className="relative">
                   {predictionMode === 'word' || inputMode === 'camera' ? (
                     /* Camera Feed */
-                    <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
+                    <div className="bg-gray-900 rounded-lg overflow-hidden ">
                       <video
                         ref={videoRef}
                         autoPlay
                         muted
-                        className="w-full h-full object-cover"
+                        className="w-full h-[60vh] sm:h-[60vh] md:h-[50vh] lg:h-[70vh] object-cover"
                       />
                       {!isCameraActive && (
                         <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
@@ -1148,7 +1148,7 @@ const Translate: React.FC = () => {
                           <video
                             src={videoPreviewUrl || undefined}
                             controls
-                            className="w-full h-full object-cover"
+                            className="w-full h-[60vh] sm:h-[60vh] md:h-[50vh] lg:h-[70vh] object-cover"
                             preload="metadata"
                           />
                           <div className="absolute top-4 right-4 flex gap-2">

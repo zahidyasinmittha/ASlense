@@ -4,8 +4,9 @@ import {
   Timer, BarChart3, Video, RefreshCw, Trophy, User, 
   Wifi, Search, Upload
 } from 'lucide-react';
-import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import { practiceAPI } from '../services/api';
+import { BASE_URL } from '../services/api';
 
 interface Prediction {
   word: string;
@@ -38,7 +39,7 @@ interface LivePredictionMessage {
 }
 
 const Practice: React.FC = () => {
-  const baseUrl = import.meta.env.VITE_BACKEND_BASEURL || 'http://localhost:8000';
+  const baseUrl = BASE_URL;
   const wsUrl = baseUrl.replace('http', 'ws');
   const { user, token, makeAuthenticatedRequest } = useAuth();
   
@@ -159,7 +160,7 @@ const Practice: React.FC = () => {
   // Load available words
   const loadAvailableWords = useCallback(async () => {
     try {
-      const response = await axios.get(`${baseUrl}/practice/available-words`);
+      const response = await practiceAPI.getAvailableWords();
       setAvailableWords((response.data as any).words || []);
     } catch (error) {
       console.error('Error loading available words:', error);
@@ -718,12 +719,7 @@ const Practice: React.FC = () => {
       formData.append('target_word', targetWord);
       formData.append('model_type', selectedModel);
       
-      const response = await axios.post(`${baseUrl}/practice/predict-video`, formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data',
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const response = await practiceAPI.predictVideo(formData);
       
       handlePredictionResult(response.data as PredictionResult);
     } catch (error: any) {
@@ -1045,7 +1041,7 @@ const Practice: React.FC = () => {
                 <div className="relative bg-black">
                   <video
                     ref={videoRef}
-                    className="w-full h-120 object-cover"
+                    className="w-full h-[60vh] sm:h-[60vh] md:h-[50vh] lg:h-[70vh] object-cover"
                     autoPlay
                     muted
                     playsInline
@@ -1187,7 +1183,7 @@ const Practice: React.FC = () => {
                       <video
                         src={videoPreview}
                         controls
-                        className="w-full h-120 object-contain bg-black"
+                        className="w-full h-[60vh] sm:h-[60vh] md:h-[50vh] lg:h-[70vh] object-cover"
                         controlsList="nodownload"
                       />
                       <div className="absolute top-3 left-3">

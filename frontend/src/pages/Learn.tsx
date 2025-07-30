@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import axios from "axios";
 import {
   Play,
   X,
@@ -17,9 +16,10 @@ import {
 } from "lucide-react";
 import VideoPlayer from "../components/VideoPlayer";
 import { useAuth } from "../contexts/AuthContext";
+import { learnAPI, BASE_URL } from '../services/api';
 
 const Learn: React.FC = () => {
-  const baseUrl = import.meta.env.VITE_BACKEND_BASEURL;
+  const baseUrl = BASE_URL;
   const { user, token, makeAuthenticatedRequest } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState("Alphabet");
   const [selectedWord, setSelectedWord] = useState<any>(null);
@@ -92,12 +92,7 @@ const Learn: React.FC = () => {
     category: string;
     word: string;
   }
-   
-  interface VideosResponse {
-  videos: VideoFromApi[];
-  total: number;
-  page: number;
-}
+
 
   const [currentWords, setCurrentWords] = useState<Video[]>([]);
   const [filteredWords, setFilteredWords] = useState<Video[]>([]);
@@ -140,10 +135,12 @@ const Learn: React.FC = () => {
 
       setLoading(true);
       try {
-        const res = await axios.get<VideosResponse>(
-          `${baseUrl}/learn/videos?category=${selectedCategory}&page=${page}&limit=20`
-        );
-        const apiVideos = res.data?.videos || [];
+        const res = await learnAPI.getVideos({
+          category: selectedCategory,
+          page: page,
+          limit: 20
+        });
+        const apiVideos = (res.data as any)?.videos || [];
 
         const newVideos: Video[] = apiVideos.map((v: VideoFromApi) => ({
           id: v.id,
@@ -221,16 +218,14 @@ const Learn: React.FC = () => {
       if (searchTerm || difficultyFilter !== "all") {
         setLoading(true);
         try {
-          const res = await axios.get<VideosResponse>(`${baseUrl}/learn/search`, {
-            params: {
-              query: searchTerm || "",
-              difficulty: difficultyFilter,
-              page: 1,
-              limit: 100,
-            },
+          const res = await learnAPI.searchVideos({
+            query: searchTerm || "",
+            difficulty: difficultyFilter,
+            page: 1,
+            limit: 100,
           });
 
-          const searchResults: Video[] = (res.data?.videos || []).map(
+          const searchResults: Video[] = ((res.data as any)?.videos || []).map(
             (v: VideoFromApi) => ({
               id: v.id,
               title: v.title || v.word || "Untitled",

@@ -1,5 +1,6 @@
 // Frontend WebSocket PSL Recognition Service
 // Add this to your frontend services folder
+import {BASE_URL} from '../services/api';
 
 class PSLWebSocketService {
   private ws: WebSocket | null = null;
@@ -13,7 +14,7 @@ class PSLWebSocketService {
   }
 
   // Connect to WebSocket
-  connect(baseUrl = 'ws://localhost:8000') {
+  connect(baseUrl = BASE_URL) {
     try {
       this.ws = new WebSocket(`${baseUrl}/api/v1/ws/psl-recognition`);
       

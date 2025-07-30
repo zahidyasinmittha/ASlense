@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Phone, MapPin, Send, Github, Linkedin, Twitter, MessageSquare, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { contactAPI } from '../services/api';
 
 const Contact: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -24,16 +25,10 @@ const Contact: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      // Send contact form data to backend
-      const response = await fetch('/api/v1/contact/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
+      // Send contact form data to backend using API service
+      const response = await contactAPI.submitContact(formData);
 
-      if (response.ok) {
+      if (response.status === 200 || response.status === 201) {
         setSubmitStatus('success');
         
         // Reset form after success

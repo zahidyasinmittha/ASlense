@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
+import { userAPI } from '../services/api';
 
 // ==================== INTERFACES ====================
 
@@ -55,24 +56,20 @@ const Dashboard: React.FC = () => {
 
   const fetchDashboardData = async () => {
     try {
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
-
       // Fetch dashboard data (includes progress)
-      const dashboardResponse = await fetch('http://localhost:8000/user/dashboard', { headers });
-      if (dashboardResponse.ok) {
-        const dashboardData = await dashboardResponse.json();
-        setProgress(dashboardData.progress);
-        setRecentPredictions(dashboardData.recent_predictions || []);
-      }
+      const dashboardResponse = await userAPI.getDashboard();
+      const dashboardData = dashboardResponse.data as any;
+      setProgress(dashboardData.progress);
+      setRecentPredictions(dashboardData.recent_predictions || []);
 
       // Fetch achievements (if endpoint exists)
-      const achievementsResponse = await fetch('http://localhost:8000/user/achievements', { headers });
-      if (achievementsResponse.ok) {
-        const achievementsData = await achievementsResponse.json();
-        setAchievements(achievementsData);
+      try {
+        const achievementsResponse = await userAPI.getAchievements();
+        const achievementsData = achievementsResponse.data;
+        setAchievements(achievementsData as any);
+      } catch (error) {
+        // Achievements endpoint might not exist, ignore error
+        console.log('Achievements endpoint not available');
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -147,7 +144,7 @@ const Dashboard: React.FC = () => {
               </div>
               <button
                 onClick={logout}
-                className="group relative bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-6 py-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+                className="group hidden md:block relative bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-6 py-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
               >
                 <span className="relative z-10">Sign Out</span>
                 <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>

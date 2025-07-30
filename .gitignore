@@ -8,8 +8,6 @@ __pycache__/
 env/
 venv/
 
-psl models
-
 # Environment variables
 .env
 .env.*  
@@ -24,7 +22,6 @@ bone_wights-checkpoint-epoch245.pt
 joints_weights-checkpoint-epoch293.pt
 joint_motion_wights-checkpoint-epoch267.pt
 # Front‑end static assets
-public/
 node_modules/
 dist/
 build/

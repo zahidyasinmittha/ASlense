@@ -1,7 +1,8 @@
+// ...existing code...
 import axios from 'axios';
 
 // Get base URL from environment variables
-const BASE_URL = import.meta.env.VITE_BACKEND_BASEURL || 'http://localhost:8000';
+export const BASE_URL = "https://skilled-dramatic-hey-mason.trycloudflare.com";
 const WS_URL = BASE_URL.replace('http', 'ws');
 
 // Create axios instance with default configuration
@@ -84,6 +85,24 @@ export const API_CONFIG = {
       METRICS: '/admin-api/metrics',
       USER_BY_ID: (userId: number) => `/admin-api/users/${userId}`,
       TOGGLE_USER_STATUS: (userId: number) => `/admin-api/users/${userId}/toggle-status`,
+    },
+    
+    // Contact endpoints
+    CONTACT: {
+      SUBMIT: '/api/v1/contact',
+      ADMIN_MESSAGES: '/api/v1/contact/admin/messages',
+      ADMIN_STATS: '/api/v1/contact/admin/stats',
+      MARK_READ: (messageId: number) => `/api/v1/contact/admin/messages/${messageId}/mark-read`,
+      MARK_REPLIED: (messageId: number) => `/api/v1/contact/admin/messages/${messageId}/mark-replied`,
+      DELETE_MESSAGE: (messageId: number) => `/api/v1/contact/admin/messages/${messageId}`,
+    },
+    
+    // PSL Alphabet endpoints
+    PSL: {
+      LIST: '/psl-alphabet',
+      ADMIN_ALL: '/psl-alphabet/admin/all',
+      BY_ID: (id: number) => `/psl-alphabet/${id}`,
+      TOGGLE_STATUS: (id: number) => `/psl-alphabet/${id}/toggle-status`,
     },
   }
 };
@@ -225,6 +244,70 @@ export const learnAPI = {
   getVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.LEARN.VIDEOS, { params }),
   searchVideos: (params: any) => api.get(API_CONFIG.ENDPOINTS.LEARN.SEARCH, { params }),
   getCategories: () => api.get(API_CONFIG.ENDPOINTS.LEARN.CATEGORIES),
+};
+
+export const contactAPI = {
+  submitContact: (contactData: {
+    name: string;
+    email: string;
+    subject: string;
+    message: string;
+  }) => api.post(API_CONFIG.ENDPOINTS.CONTACT.SUBMIT, contactData),
+  
+  getMessages: (skip = 0, limit = 100, status?: string) => {
+    const params = new URLSearchParams();
+    params.append('skip', skip.toString());
+    params.append('limit', limit.toString());
+    if (status) params.append('status', status);
+    return api.get(`${API_CONFIG.ENDPOINTS.CONTACT.ADMIN_MESSAGES}?${params.toString()}`);
+  },
+  
+  markAsRead: (messageId: number) =>
+    api.post(API_CONFIG.ENDPOINTS.CONTACT.MARK_READ(messageId)),
+  
+  markAsReplied: (messageId: number, adminNotes = '') =>
+    api.post(API_CONFIG.ENDPOINTS.CONTACT.MARK_REPLIED(messageId), { admin_notes: adminNotes }),
+  
+  deleteMessage: (messageId: number) =>
+    api.delete(API_CONFIG.ENDPOINTS.CONTACT.DELETE_MESSAGE(messageId)),
+  
+  getStats: () => api.get(API_CONFIG.ENDPOINTS.CONTACT.ADMIN_STATS),
+};
+
+export const pslAPI = {
+  getAll: (params?: { skip?: number; limit?: number; search?: string; difficulty?: string; is_active?: boolean }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.skip !== undefined) searchParams.append('skip', params.skip.toString());
+    if (params?.limit !== undefined) searchParams.append('limit', params.limit.toString());
+    if (params?.search) searchParams.append('search', params.search);
+    if (params?.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params?.is_active !== undefined) searchParams.append('is_active', params.is_active.toString());
+    
+    return api.get(`/api/v1${API_CONFIG.ENDPOINTS.PSL.LIST}/?${searchParams.toString()}`);
+  },
+  
+  getAllAdmin: (params?: { skip?: number; limit?: number; search?: string; difficulty?: string; is_active?: boolean }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.skip !== undefined) searchParams.append('skip', params.skip.toString());
+    if (params?.limit !== undefined) searchParams.append('limit', params.limit.toString());
+    if (params?.search) searchParams.append('search', params.search);
+    if (params?.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params?.is_active !== undefined) searchParams.append('is_active', params.is_active.toString());
+    
+    return api.get(`/api/v1${API_CONFIG.ENDPOINTS.PSL.ADMIN_ALL}?${searchParams.toString()}`);
+  },
+  
+  create: (pslData: any) =>
+    api.post(API_CONFIG.ENDPOINTS.PSL.LIST, pslData),
+  
+  update: (id: number, pslData: any) =>
+    api.put(API_CONFIG.ENDPOINTS.PSL.BY_ID(id), pslData),
+  
+  delete: (id: number) =>
+    api.delete(API_CONFIG.ENDPOINTS.PSL.BY_ID(id)),
+  
+  toggleStatus: (id: number) =>
+    api.patch(API_CONFIG.ENDPOINTS.PSL.TOGGLE_STATUS(id)),
 };
 
 // WebSocket utilities

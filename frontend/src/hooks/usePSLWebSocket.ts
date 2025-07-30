@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { BASE_URL } from '../services/api';
 
 interface PSLPrediction {
   letter: string;
@@ -27,7 +28,7 @@ interface UsePSLWebSocketProps {
   modelType?: 'ps_mini' | 'ps_pro';
 }
 
-export const usePSLWebSocket = ({
+export const    usePSLWebSocket = ({
   onPrediction,
   onError,
   onConnected,
@@ -48,7 +49,7 @@ export const usePSLWebSocket = ({
     
     try {
       // Connect to the PSL WebSocket endpoint
-      const wsUrl = `ws://localhost:8000/api/v1/practice/psl-predict?model_type=${modelType}`;
+      const wsUrl = `${BASE_URL}/api/v1/practice/psl-predict?model_type=${modelType}`;
       const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {

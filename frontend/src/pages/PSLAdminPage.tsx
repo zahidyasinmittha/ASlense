@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   CheckCircle
 } from 'lucide-react';
+import { pslAPI } from '../services/api';
 
 interface PSLAlphabetEntry {
   id: number;
@@ -57,21 +58,12 @@ const PSLAdminPage: React.FC = () => {
   const fetchEntries = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/v1/psl-alphabet/admin/all', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setEntries(data);
-        setFilteredEntries(data);
-      } else {
-        showNotification('error', 'Failed to fetch PSL alphabet entries');
-      }
+      const response = await pslAPI.getAllAdmin();
+      const data = response.data as PSLAlphabetEntry[];
+      setEntries(data);
+      setFilteredEntries(data);
     } catch (error) {
-      showNotification('error', 'Error fetching PSL alphabet entries');
+      showNotification('error', 'Failed to fetch PSL alphabet entries');
     } finally {
       setLoading(false);
     }
@@ -109,26 +101,14 @@ const PSLAdminPage: React.FC = () => {
 
   const handleCreate = async () => {
     try {
-      const response = await fetch('/api/v1/psl-alphabet/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (response.ok) {
-        showNotification('success', 'PSL alphabet entry created successfully');
-        setShowModal(false);
-        resetForm();
-        fetchEntries();
-      } else {
-        const error = await response.json();
-        showNotification('error', error.detail || 'Failed to create entry');
-      }
-    } catch (error) {
-      showNotification('error', 'Error creating PSL alphabet entry');
+      await pslAPI.create(formData);
+      showNotification('success', 'PSL alphabet entry created successfully');
+      setShowModal(false);
+      resetForm();
+      fetchEntries();
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || 'Failed to create entry';
+      showNotification('error', errorMessage);
     }
   };
 
@@ -136,27 +116,15 @@ const PSLAdminPage: React.FC = () => {
     if (!editingEntry) return;
 
     try {
-      const response = await fetch(`/api/v1/psl-alphabet/${editingEntry.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (response.ok) {
-        showNotification('success', 'PSL alphabet entry updated successfully');
-        setShowModal(false);
-        setEditingEntry(null);
-        resetForm();
-        fetchEntries();
-      } else {
-        const error = await response.json();
-        showNotification('error', error.detail || 'Failed to update entry');
-      }
-    } catch (error) {
-      showNotification('error', 'Error updating PSL alphabet entry');
+      await pslAPI.update(editingEntry.id, formData);
+      showNotification('success', 'PSL alphabet entry updated successfully');
+      setShowModal(false);
+      setEditingEntry(null);
+      resetForm();
+      fetchEntries();
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || 'Failed to update entry';
+      showNotification('error', errorMessage);
     }
   };
 
@@ -166,41 +134,23 @@ const PSLAdminPage: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`/api/v1/psl-alphabet/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (response.ok) {
-        showNotification('success', 'PSL alphabet entry deleted successfully');
-        fetchEntries();
-      } else {
-        showNotification('error', 'Failed to delete entry');
-      }
-    } catch (error) {
-      showNotification('error', 'Error deleting PSL alphabet entry');
+      await pslAPI.delete(id);
+      showNotification('success', 'PSL alphabet entry deleted successfully');
+      fetchEntries();
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || 'Failed to delete entry';
+      showNotification('error', errorMessage);
     }
   };
 
   const toggleStatus = async (id: number) => {
     try {
-      const response = await fetch(`/api/v1/psl-alphabet/${id}/toggle-status`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (response.ok) {
-        showNotification('success', 'Entry status updated successfully');
-        fetchEntries();
-      } else {
-        showNotification('error', 'Failed to update entry status');
-      }
-    } catch (error) {
-      showNotification('error', 'Error updating entry status');
+      await pslAPI.toggleStatus(id);
+      showNotification('success', 'Entry status updated successfully');
+      fetchEntries();
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || 'Failed to update entry status';
+      showNotification('error', errorMessage);
     }
   };
 

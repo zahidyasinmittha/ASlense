@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { translationSessionManager } from '../services/translationSessionManager';
+import { authAPI } from '../services/api';
+import {BASE_URL} from '../services/api';
 
 export interface User {
   id: number;
@@ -59,31 +61,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8000/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: email,
-          password: password,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setToken(data.access_token);
-        setRefreshToken(data.refresh_token);
-        setUser(data.user);
-        
-        // Save to localStorage
-        localStorage.setItem('auth_token', data.access_token);
-        localStorage.setItem('refresh_token', data.refresh_token || '');
-        localStorage.setItem('auth_user', JSON.stringify(data.user));
-        
-        return true;
-      }
-      return false;
+      const response = await authAPI.login({ username: email, password });
+      const data = response.data as {
+        access_token: string;
+        refresh_token: string;
+        user: User;
+      };
+      setToken(data.access_token);
+      setRefreshToken(data.refresh_token);
+      setUser(data.user);
+      // Save to localStorage
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token || '');
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      return true;
     } catch (error) {
       console.error('Login error:', error);
       return false;
@@ -103,29 +94,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         full_name: userData.fullName || '', // Map fullName to full_name
         role: 'user'
       };
-      
-      const response = await fetch('http://localhost:8000/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(backendData),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setToken(data.access_token);
-        setRefreshToken(data.refresh_token);
-        setUser(data.user);
-        
-        // Save to localStorage
-        localStorage.setItem('auth_token', data.access_token);
-        localStorage.setItem('refresh_token', data.refresh_token || '');
-        localStorage.setItem('auth_user', JSON.stringify(data.user));
-        
-        return true;
-      }
-      return false;
+      const response = await authAPI.register(backendData);
+      const data = response.data as {
+        access_token: string;
+        refresh_token: string;
+        user: User;
+      };
+      setToken(data.access_token);
+      setRefreshToken(data.refresh_token);
+      setUser(data.user);
+      // Save to localStorage
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token || '');
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      return true;
     } catch (error) {
       console.error('Registration error:', error);
       return false;
@@ -142,7 +124,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/auth/refresh', {
+      const response = await fetch(`${BASE_URL}/auth/refresh`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Eye, Star, ChevronRight, ImageIcon, Target, X, Play, Lightbulb, ArrowLeft, ArrowRight } from 'lucide-react';
+import { pslAPI } from '../services/api';
 
 interface PSLAlphabetEntry {
   id: number;
@@ -42,15 +43,10 @@ const PSLLearn: React.FC = () => {
       setLoading(true);
 
       // Fetch all PSL entries for complete alphabet display
-      const response = await fetch(`/api/v1/psl-alphabet/?skip=0&limit=200`);
+      const response = await pslAPI.getAll({ skip: 0, limit: 200 });
       
-      if (response.ok) {
-        const data = await response.json();
-        setPslEntries(data);
-        setError(null);
-      } else {
-        setError('Failed to fetch PSL entries');
-      }
+      setPslEntries(response.data as PSLAlphabetEntry[]);
+      setError(null);
     } catch (error) {
       console.error('Error fetching PSL entries:', error);
       setError('Error loading PSL alphabet entries');

@@ -439,15 +439,14 @@ const PSLPractice: React.FC = () => {
                 </div>
               </div>
               
-              <div className="relative bg-gray-900 rounded-lg overflow-hidden mb-6" style={{ width: '100%', height: '400px' }}>
+              <div className="relative bg-gray-900 rounded-lg overflow-hidden" style={{ width: '100%' }}>
                 <video
+                 className="w-full h-[60vh] sm:h-[60vh] md:h-[50vh] lg:h-[70vh] object-cover"
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
                   style={{ 
-                    width: '100%',
-                    height: '100%',
                     objectFit: 'cover',
                     backgroundColor: '#000000'
                   }}
@@ -507,11 +506,11 @@ const PSLPractice: React.FC = () => {
                 )}
               </div>
 
-              <div className="flex justify-center space-x-4">
+              <div className="flex justify-center mt-4 space-x-4">
                 {!cameraStarted ? (
                   <button
                     onClick={startCamera}
-                    className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors duration-300"
+                    className="flex items-center space-x-2 px-3 md:px-6 py-3 rounded-lg font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors duration-300"
                   >
                     <Camera className="h-5 w-5" />
                     <span>Start Camera</span>
@@ -525,7 +524,7 @@ const PSLPractice: React.FC = () => {
                           setConnectionStatus('connecting');
                           pslWebSocket.connect();
                         }}
-                        className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors duration-300"
+                        className="flex items-center space-x-2 px-3 md:px-6 py-3 rounded-lg font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors duration-300"
                       >
                         <Zap className="h-5 w-5" />
                         <span>Connect</span>
@@ -538,7 +537,7 @@ const PSLPractice: React.FC = () => {
                         {!isRecording ? (
                           <button
                             onClick={startPrediction}
-                            className="flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors duration-300"
+                            className="flex items-center space-x-2 px-3 md:px-6 py-3 rounded-lg font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors duration-300"
                           >
                             <Play className="h-5 w-5" />
                             <span>Start Prediction</span>

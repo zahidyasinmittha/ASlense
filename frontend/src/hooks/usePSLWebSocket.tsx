@@ -2,6 +2,7 @@
 // Add this to your existing PSLPractice component
 
 import { useEffect, useRef, useState } from 'react';
+import {BASE_URL} from '../services/api';
 
 // Add this interface for the WebSocket service
 interface PSLPrediction {
@@ -25,7 +26,7 @@ const usePSLWebSocket = () => {
 
   const connect = () => {
     try {
-      wsRef.current = new WebSocket('ws://localhost:8000/api/v1/ws/psl-recognition');
+      wsRef.current = new WebSocket(`${BASE_URL}/api/v1/ws/psl-recognition`);
       
       wsRef.current.onopen = () => {
         setIsConnected(true);
