@@ -323,7 +323,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 ## Model weights to download
 - **ALL Model Weights** - [Drive Link](https://drive.google.com/drive/folders/1EFPTa3hPqEo2f15dHvCxpshaTn5cqDX-?usp=drive_link)
-
+---
+## Live Preview
+- **ALL Model Weights** - [Link](https://aslense-frontend-deployment.vercel.app/)
 ---
 <div align="center">
   <strong>Made with ❤️ for the ASL learning community</strong>
